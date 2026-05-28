@@ -52,9 +52,21 @@ STEREO_STRICT_THRESHOLD_DB = float(_u.get("stereo_strict_threshold_db", -90.0))
 STEREO_LOOSE_THRESHOLD_DB  = float(_u.get("stereo_loose_threshold_db",  -60.0))
 STEREO_PEAK_IMBALANCE_DB   = float(_u.get("stereo_peak_imbalance_db",    40.0))
 
-# --- Phase 6: Silence Removal ---
+# --- Phase 5: Silence Removal ---
 SILENCE_THRESHOLD_DB  = float(_u.get("silence_threshold_db",  -60.0))
 SILENCE_MIN_DURATION  = float(_u.get("silence_min_duration",    0.1))
+
+# --- Phase 6: BPM Detection ---
+BPM_MIN_DURATION    = float(_u.get("bpm_min_duration",    2.0))
+BPM_MAX_DURATION    = float(_u.get("bpm_max_duration",  120.0))
+BPM_MIN_BEATS       = int(  _u.get("bpm_min_beats",         4))
+BPM_MIN_CONFIDENCE  = float(_u.get("bpm_min_confidence",  0.4))
+BPM_TARGET_MIN      = int(  _u.get("bpm_target_min",       70))
+BPM_TARGET_MAX      = int(  _u.get("bpm_target_max",      175))
+BPM_SKIP_FOLDER_HINTS = set(_u.get("bpm_skip_folder_hints", [
+    "one shot", "one-shot", "oneshot", "fx", "field recording",
+    "ambience", "ambient", "foley", "sfx", "hit", "hits",
+]))
 
 # --- Exclusions ---
 EXCLUDED_FOLDER_NAMES = {

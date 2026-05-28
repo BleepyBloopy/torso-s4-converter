@@ -6,5 +6,15 @@
   "stereo_loose_threshold_db": -60.0,
   "stereo_peak_imbalance_db": 40.0,
   "silence_threshold_db": -60.0,
-  "silence_min_duration": 0.1
+  "silence_min_duration": 0.1,
+  "bpm_min_duration": 2.0,
+  "bpm_max_duration": 120.0,
+  "bpm_min_beats": 4,
+  "bpm_min_confidence": 0.4,
+  "bpm_target_min": 70,
+  "bpm_target_max": 175,
+  "bpm_skip_folder_hints": [
+    "one shot", "one-shot", "oneshot", "fx", "field recording",
+    "ambience", "ambient", "foley", "sfx", "hit", "hits"
+  ]
 }
