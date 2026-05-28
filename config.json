@@ -1,9 +1,10 @@
 {
   "base_dir": "/Volumes/S-4/SAMPLES",
   "delete_original": true,
-  "threshold_seconds": 10.0,
   "name_length_limit": 70,
   "stereo_strict_threshold_db": -90.0,
   "stereo_loose_threshold_db": -60.0,
-  "stereo_peak_imbalance_db": 40.0
+  "stereo_peak_imbalance_db": 40.0,
+  "silence_threshold_db": -60.0,
+  "silence_min_duration": 0.1
 }

@@ -342,19 +342,16 @@ class PhaseTab(QWidget):
 class Phase1Tab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(main_window, 1, "Non-WAV Conversion",
-                         "Convert MP3, AIFF, FLAC etc to 48 kHz WAV. "
-                         "Bit depth chosen automatically based on duration.",
+                         "Convert MP3, AIFF, FLAC etc → 16-bit 48 kHz WAV.",
                          help_text=(
                              "Scans for audio files in non-WAV formats (MP3, AIFF, FLAC, M4A, "
                              "OGG, WMA, ALAC, …) and converts them to WAV using ffmpeg.\n\n"
                              "Rules applied:\n"
-                             "  • Target sample rate: 48 000 Hz (S-4 native)\n"
-                             "  • Duration ≤ 10 s  →  24-bit PCM (pcm_s24le)\n"
-                             "  • Duration  > 10 s  →  16-bit PCM (pcm_s16le)\n"
+                             "  • Target: 48 000 Hz, 16-bit PCM (pcm_s16le) — always\n"
                              "  • Original file deleted after successful conversion "
-                             "(if DELETE_ORIGINAL = True in config.py)\n\n"
-                             "Tip: Run Phase 1 before Phases 2–3 so those phases see the "
-                             "freshly converted WAVs."
+                             "(configurable via delete_original in config.json)\n\n"
+                             "Tip: Run this first — Phase 2 will then catch any WAVs "
+                             "that still need sample-rate or bit-depth correction."
                          ))
 
     def build_table(self):
@@ -373,17 +370,16 @@ class Phase1Tab(PhaseTab):
 
 class Phase2Tab(PhaseTab):
     def __init__(self, main_window):
-        super().__init__(main_window, 2, "Sample Rate",
-                         "Resample WAVs to 48 kHz (S-4 native rate). "
-                         "Preserves bit depth.",
+        super().__init__(main_window, 2, "Sample Rate + Bit Depth",
+                         "Find WAVs not at 48 kHz or not at 16-bit and fix both in one pass.",
                          help_text=(
-                             "Scans WAV files whose sample rate is not 48 000 Hz and resamples "
-                             "them using ffmpeg's high-quality SoX resampler.\n\n"
+                             "Scans all WAV files and flags any that are not at 48 000 Hz "
+                             "or not at 16-bit. Both issues are corrected in a single ffmpeg pass.\n\n"
                              "Rules applied:\n"
-                             "  • Target: 48 000 Hz (Torso S-4 native rate)\n"
-                             "  • Bit depth is preserved (16-bit stays 16-bit, 24-bit stays 24-bit)\n"
-                             "  • Already-48 kHz files are skipped automatically\n\n"
-                             "Tip: This phase is safe to re-run; it skips files that are already correct."
+                             "  • Target sample rate: 48 000 Hz (S-4 native)\n"
+                             "  • Target bit depth: 16-bit (pcm_s16le) — always\n"
+                             "  • Files already at 48 kHz AND 16-bit are skipped\n\n"
+                             "Tip: Run after Phase 1 so freshly converted WAVs are included."
                          ))
 
     def build_table(self):
@@ -401,40 +397,10 @@ class Phase2Tab(PhaseTab):
 
 
 class Phase3Tab(PhaseTab):
-    def __init__(self, main_window):
-        super().__init__(main_window, 3, "Bit Depth",
-                         "Convert 24-bit files > 10 s to 16-bit. "
-                         "Saves ~33 % storage with no audible loss.",
-                         help_text=(
-                             "Finds 24-bit WAV files longer than 10 seconds and converts them "
-                             "to 16-bit, saving ~33 % storage with no audible loss at normal "
-                             "sample-library volumes.\n\n"
-                             "Rules applied:\n"
-                             "  • Trigger: file is 24-bit AND duration > 10 s\n"
-                             "  • Short 24-bit files (≤ 10 s) are kept at 24-bit for maximum fidelity\n"
-                             "  • Files already at 16-bit are always skipped\n\n"
-                             "Tip: Run after Phase 1 and Phase 2 so freshly converted files are included."
-                         ))
-
-    def build_table(self):
-        return FindingsTable(["File", "Current", "Target", "Savings"])
-
-    def row_builder(self, f):
-        return [f.path.name, f.current, f.target, core.format_bytes(f.savings_bytes)]
-
-    def scan_fn(self):
-        return core.scan_phase_3, (self.main_window.base_dir, self.main_window.cache,
-                                    self.main_window.only_new)
-
-    def apply_fn(self):
-        return core.apply_phase_3
-
-
-class Phase4Tab(PhaseTab):
-    """Phase 4 works folder-by-folder. The 'Scan' button opens a folder picker."""
+    """Phase 3 works folder-by-folder — the Scan button opens a folder picker."""
 
     def __init__(self, main_window):
-        super().__init__(main_window, 4, "Prefix Removal",
+        super().__init__(main_window, 3, "Prefix Removal",
                          "Detect & strip shared prefixes from a folder of samples. "
                          "Pick a folder to scan.",
                          help_text=(
@@ -442,7 +408,7 @@ class Phase4Tab(PhaseTab):
                              "For example, if a folder contains:\n"
                              "  KickDrum_Tight.wav, KickDrum_Open.wav, KickDrum_Hard.wav …\n"
                              "the prefix \"KickDrum_\" is identified and stripped from all of them.\n\n"
-                             "Detection thresholds (config.py):\n"
+                             "Detection thresholds (config.json):\n"
                              "  • Minimum prefix length: 8 characters\n"
                              "  • Minimum group size: 3 files must share the prefix\n"
                              "  • Short-name skip: folders where all names are ≤ 30 chars are ignored\n\n"
@@ -453,7 +419,6 @@ class Phase4Tab(PhaseTab):
         self.scan_btn.setText("📁 Pick Folder & Scan")
 
     def build_table(self):
-        # Editable prefix column so you can override
         return FindingsTable(["Folder", "Detected Prefix (editable)", "Files", "Example Rename"],
                             editable_col=2)
 
@@ -465,14 +430,13 @@ class Phase4Tab(PhaseTab):
             ex = Path(affected[0]).name
             if ex.startswith(prefix):
                 example = f"{ex} → {ex[len(prefix):]}"
-        return [str(f.path.relative_to(self.main_window.base_dir) if f.path.is_relative_to(self.main_window.base_dir) else f.path),
+        return [str(f.path.relative_to(self.main_window.base_dir)
+                    if f.path.is_relative_to(self.main_window.base_dir) else f.path),
                 prefix, len(affected), example]
 
     def start_scan(self):
         if not self.main_window.check_base_dir():
             return
-
-        # Folder picker
         folder_str = QFileDialog.getExistingDirectory(
             self, "Select folder to scan for prefix",
             str(self.main_window.base_dir),
@@ -481,9 +445,8 @@ class Phase4Tab(PhaseTab):
             return
         folder = Path(folder_str)
 
-        finding = core.scan_phase_4(folder)
+        finding = core.scan_phase_3(folder)
         if not finding:
-            # Offer manual prefix entry
             manual, ok = QInputDialog.getText(
                 self, "No prefix detected",
                 f"No clear prefix found in {folder.name}.\nEnter prefix manually (or cancel):"
@@ -496,23 +459,21 @@ class Phase4Tab(PhaseTab):
                     files = []
                 if files:
                     finding = core.Finding(
-                        phase=4, path=folder,
+                        phase=3, path=folder,
                         reason="manual prefix",
                         extra={"prefix": manual, "affected_files": [str(f) for f in files]},
                     )
 
         if finding:
-            # Add to existing findings rather than replacing
             self.findings.append(finding)
             self.table.set_findings(self.findings, self.row_builder)
             self.count_label.setText(f"{len(self.findings)} folders queued")
             self.apply_btn.setEnabled(True)
-            self.main_window.log(f"[Phase 4] Added folder: {folder.name}")
+            self.main_window.log(f"[Phase 3] Added folder: {folder.name}")
         else:
             QMessageBox.information(self, "No Findings", "No prefix to remove in this folder.")
 
     def get_apply_extra(self, selected):
-        # Pull the (possibly edited) prefix from the table
         prefixes = {}
         for f in selected:
             edited = self.table.get_edit_value(f)
@@ -521,23 +482,23 @@ class Phase4Tab(PhaseTab):
         return {"prefixes": prefixes}
 
     def apply_fn(self):
-        return core.apply_phase_4
+        return core.apply_phase_3
 
 
-class Phase5Tab(PhaseTab):
+class Phase4Tab(PhaseTab):
     def __init__(self, main_window):
-        super().__init__(main_window, 5, "Long Filenames",
+        super().__init__(main_window, 4, "Long Filenames",
                          f"Find files with stems > {config.NAME_LENGTH_LIMIT} chars. "
                          "Edit the 'New Name' column to rename.",
                          help_text=(
                              f"Finds WAV files whose stem (name without extension) is longer than "
                              f"{config.NAME_LENGTH_LIMIT} characters. While FAT32 allows 255-char "
-                             f"names, the S-4 display and file browser truncate names that are too long.\n\n"
+                             f"names, the S-4 display truncates long names.\n\n"
                              f"Rules applied:\n"
                              f"  • Limit: {config.NAME_LENGTH_LIMIT} characters for the stem\n"
                              f"  • Suggested shorter names are auto-generated (truncated + cleaned)\n"
-                             f"  • Edit the \"New Name\" column before applying to set your preferred name\n\n"
-                             f"Tip: Run Phase 4 (prefix removal) first — stripping a shared prefix "
+                             f"  • Edit the \"New Name\" column before applying\n\n"
+                             f"Tip: Run Phase 3 (prefix removal) first — stripping a shared prefix "
                              f"often brings names under the limit automatically."
                          ))
 
@@ -555,7 +516,7 @@ class Phase5Tab(PhaseTab):
         return [f.current, f.reason, suggested, rel]
 
     def scan_fn(self):
-        return core.scan_phase_5, (self.main_window.base_dir, self.main_window.only_new)
+        return core.scan_phase_4, (self.main_window.base_dir, self.main_window.only_new)
 
     def get_apply_extra(self, selected):
         new_names = {}
@@ -566,24 +527,21 @@ class Phase5Tab(PhaseTab):
         return {"new_names": new_names}
 
     def apply_fn(self):
-        return core.apply_phase_5
+        return core.apply_phase_4
 
 
-class Phase6Tab(PhaseTab):
-    """Phase 6 - Stereo to Mono detection.
-    
-    Adds a 'Loose mode' checkbox to include near-mono files (off by default).
-    """
+class Phase5Tab(PhaseTab):
+    """Phase 5 — Stereo → Mono. Adds a Loose mode checkbox."""
 
     def __init__(self, main_window):
-        super().__init__(main_window, 6, "Stereo to Mono",
+        super().__init__(main_window, 5, "Stereo → Mono",
                          "Detect 'fake stereo' files where L and R are identical. "
-                         "Saves ~50 % per converted file. True stereo files are skipped.",
+                         "Saves ~50 % per file. True stereo is never touched.",
                          help_text=(
                              "Analyses stereo WAV files to detect \"fake stereo\" — files where "
                              "both channels carry identical (or nearly identical) audio. "
                              "Converting these to true mono saves ~50 % file size.\n\n"
-                             "Detection thresholds (config.py):\n"
+                             "Detection thresholds (config.json):\n"
                              "  • Dual mono   (auto-selected): max |L−R| ≤ −90 dBFS\n"
                              "      Channels are bit-perfect or essentially identical.\n"
                              "  • One-sided   (auto-selected): one channel ≥ 40 dB quieter\n"
@@ -595,16 +553,11 @@ class Phase6Tab(PhaseTab):
                          ))
         self.include_near_mono = False
 
-        # Insert a "Loose mode" checkbox into the toolbar
         loose_chk = QCheckBox("Loose mode (include near-mono, opt-in)")
         loose_chk.setToolTip("Also flag files with very small (≤ -60 dB) L/R differences. "
-                             "These will be listed but UNCHECKED by default - review carefully.")
+                             "Listed but UNCHECKED by default — review carefully.")
         loose_chk.stateChanged.connect(self._on_loose_changed)
-        # Insert before the apply button (which is the last widget)
-        # Toolbar is at layout index 1 (after the description label)
         toolbar = self.layout().itemAt(1).layout()
-        # Insert before the count label (index 4: scan, select_all, select_none, stretch, count, apply)
-        # Easier: just append before the apply by inserting at position 3
         toolbar.insertWidget(3, loose_chk)
 
     def _on_loose_changed(self, state):
@@ -617,15 +570,58 @@ class Phase6Tab(PhaseTab):
         cls = f.extra.get("classification", "?")
         cls_pretty = {
             "dual_mono": "Dual mono (identical L/R)",
-            "one_side": f"One-sided ({f.extra.get('keep_channel', '?')} only)",
+            "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
             "near_mono": "Near-mono (faint stereo)",
         }.get(cls, cls)
         return [f.path.name, cls_pretty, f.current, f.target,
                 core.format_bytes(f.savings_bytes)]
 
     def scan_fn(self):
-        return core.scan_phase_6, (self.main_window.base_dir, self.main_window.cache,
+        return core.scan_phase_5, (self.main_window.base_dir, self.main_window.cache,
                                     self.main_window.only_new, self.include_near_mono)
+
+    def apply_fn(self):
+        return core.apply_phase_5
+
+
+class Phase6Tab(PhaseTab):
+    """Phase 6 — Silence removal."""
+
+    def __init__(self, main_window):
+        super().__init__(main_window, 6, "Silence Removal",
+                         "Find WAVs with leading/trailing silence and trim it off.",
+                         help_text=(
+                             "Scans WAV files for silence at the start and/or end and trims it. "
+                             "Particularly useful for stems and one-shots that have dead air "
+                             "before the transient or a long tail after the sound ends.\n\n"
+                             "Detection thresholds (config.json):\n"
+                             f"  • Noise floor: {config.SILENCE_THRESHOLD_DB} dBFS "
+                             "(below this = silence)\n"
+                             f"  • Minimum duration: {config.SILENCE_MIN_DURATION}s "
+                             "(shorter gaps are ignored)\n\n"
+                             "The filter is applied with ffmpeg's silenceremove. "
+                             "The areverse trick is used to detect trailing silence accurately.\n\n"
+                             "Tip: Run this after Phases 1–2 so all files are already at "
+                             "48 kHz / 16-bit before trimming."
+                         ))
+
+    def build_table(self):
+        return FindingsTable(["File", "Lead Silence", "Trail Silence", "Duration", "Est. Savings"])
+
+    def row_builder(self, f):
+        lead  = f.extra.get("lead", 0.0)
+        trail = f.extra.get("trail", 0.0)
+        return [
+            f.path.name,
+            f"{lead:.2f}s" if lead >= config.SILENCE_MIN_DURATION else "—",
+            f"{trail:.2f}s" if trail >= config.SILENCE_MIN_DURATION else "—",
+            f.current,
+            core.format_bytes(f.savings_bytes),
+        ]
+
+    def scan_fn(self):
+        return core.scan_phase_6, (self.main_window.base_dir, self.main_window.cache,
+                                    self.main_window.only_new)
 
     def apply_fn(self):
         return core.apply_phase_6
@@ -689,11 +685,11 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(Phase1Tab(self), "1. Non-WAV")
-        self.tabs.addTab(Phase2Tab(self), "2. Sample Rate")
-        self.tabs.addTab(Phase3Tab(self), "3. Bit Depth")
-        self.tabs.addTab(Phase4Tab(self), "4. Prefixes")
-        self.tabs.addTab(Phase5Tab(self), "5. Long Names")
-        self.tabs.addTab(Phase6Tab(self), "6. Stereo→Mono")
+        self.tabs.addTab(Phase2Tab(self), "2. SR + Bit Depth")
+        self.tabs.addTab(Phase3Tab(self), "3. Prefixes")
+        self.tabs.addTab(Phase4Tab(self), "4. Long Names")
+        self.tabs.addTab(Phase5Tab(self), "5. Stereo→Mono")
+        self.tabs.addTab(Phase6Tab(self), "6. Silence")
         self.tabs.setEnabled(False)
         splitter.addWidget(self.tabs)
 

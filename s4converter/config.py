@@ -30,11 +30,8 @@ CACHE_FILE_NAME    = ".s4_cache.json"
 LOG_FILE_NAME      = ".s4_converter.log"
 
 # --- Audio Targets ---
-FORCE_AR          = "48000"
-THRESHOLD_SECONDS = float(_u.get("threshold_seconds", 10.0))
-
+FORCE_AR     = "48000"
 WAV_CODEC_16 = "pcm_s16le"
-WAV_CODEC_24 = "pcm_s24le"
 
 # --- Behavior ---
 DELETE_ORIGINAL = bool(_u.get("delete_original", True))
@@ -54,6 +51,10 @@ PARALLEL_FFPROBE_WORKERS = 4
 STEREO_STRICT_THRESHOLD_DB = float(_u.get("stereo_strict_threshold_db", -90.0))
 STEREO_LOOSE_THRESHOLD_DB  = float(_u.get("stereo_loose_threshold_db",  -60.0))
 STEREO_PEAK_IMBALANCE_DB   = float(_u.get("stereo_peak_imbalance_db",    40.0))
+
+# --- Phase 6: Silence Removal ---
+SILENCE_THRESHOLD_DB  = float(_u.get("silence_threshold_db",  -60.0))
+SILENCE_MIN_DURATION  = float(_u.get("silence_min_duration",    0.1))
 
 # --- Exclusions ---
 EXCLUDED_FOLDER_NAMES = {
