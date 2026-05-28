@@ -778,6 +778,17 @@ def detect_bpm(path: Path, info: AudioInfo) -> Optional[Tuple[float, float]]:
     return (round(bpm), round(confidence, 2))
 
 
+_BPM_IN_NAME_RE = re.compile(
+    r'(?:^|[_\s\-])(\d{2,3})(?:bpm|[_\s\-]|$)',
+    re.IGNORECASE,
+)
+
+
+def _stem_has_bpm(path: Path) -> bool:
+    """Return True if the filename already contains a BPM-like number."""
+    return bool(_BPM_IN_NAME_RE.search(path.stem))
+
+
 def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
                  ) -> List[Finding]:
@@ -788,11 +799,13 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
         return findings
 
     # First pass: use cached probe data to filter by duration (fast)
+    # Also skip files whose names already contain a BPM value.
     probe_results = parallel_ffprobe(candidates, cache, progress_cb=None)
     duration_candidates = [
         (p, info) for p, info in probe_results
         if info is not None
         and config.BPM_MIN_DURATION <= info.duration <= config.BPM_MAX_DURATION
+        and not _stem_has_bpm(p)
     ]
 
     total = len(duration_candidates)
