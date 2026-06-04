@@ -408,8 +408,9 @@ class PhaseTab(QWidget):
         parts = []
         for folder in self._all_top:
             if folder == self._active_top:
+                active_folder = str(Path(self._active_full_path).parent) if self._active_full_path else ""
                 parts.append(
-                    f'<div style="color:#0d47a1; font-weight:bold;">▶&nbsp;&nbsp;{esc(self._active_full_path)}</div>'
+                    f'<div style="color:#0d47a1; font-weight:bold;">▶&nbsp;&nbsp;{esc(active_folder)}</div>'
                 )
                 if self._current_file:
                     parts.append(
