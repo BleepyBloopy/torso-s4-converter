@@ -1,5 +1,6 @@
 {
-  "base_dir": "/Volumes/S-4/SAMPLES",
+  "s4_root": "/Volumes/S-4/SAMPLES",
+  "usb_root": "/Volumes/USB",
   "delete_original": true,
   "name_length_limit": 70,
   "stereo_strict_threshold_db": -90.0,

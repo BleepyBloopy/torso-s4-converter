@@ -23,7 +23,9 @@ def _load() -> dict:
 _u = _load()
 
 # --- Drive / Paths ---
-DEFAULT_BASE_DIR = Path(_u.get("base_dir", "/Volumes/S-4/SAMPLES"))
+S4_ROOT          = Path(_u.get("s4_root",  "/Volumes/S-4/SAMPLES"))
+USB_ROOT         = Path(_u.get("usb_root", "/Volumes/USB"))
+DEFAULT_BASE_DIR = USB_ROOT
 
 FOLDER_MARKER_NAME = ".s4_processed"
 CACHE_FILE_NAME    = ".s4_cache.json"

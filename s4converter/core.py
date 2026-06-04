@@ -362,6 +362,29 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None) -> in
     return count
 
 
+def scan_phase_2_all(base_dir: Path, only_new: bool = False,
+                     progress_cb: Optional[Callable[[int, int], None]] = None,
+                     ) -> List[Finding]:
+    """Scan every subfolder under base_dir for shared filename prefixes."""
+    folders: List[Path] = []
+    for root, dirs, _ in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
+                   and not d.startswith(".")]
+        root_path = Path(root)
+        if only_new and FolderMarkers.is_folder_clean(root_path):
+            continue
+        folders.append(root_path)
+
+    findings: List[Finding] = []
+    for i, folder in enumerate(folders, 1):
+        if progress_cb:
+            progress_cb(i, len(folders))
+        finding = scan_phase_2(folder)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
 # ============================================================================
 # Phase 3: Long filename cleanup
 # ============================================================================

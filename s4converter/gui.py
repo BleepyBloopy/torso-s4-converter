@@ -263,8 +263,7 @@ class PhaseTab(QWidget):
         if not self.main_window.check_base_dir():
             return
 
-        self.scan_btn.setEnabled(False)
-        self.apply_btn.setEnabled(False)
+        self.main_window.set_busy(True)
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self.main_window.log(f"[Phase {self.phase_num}] Scanning...")
@@ -290,17 +289,15 @@ class PhaseTab(QWidget):
         self.findings = findings
         self.table.set_findings(findings, self.row_builder)
         self.count_label.setText(f"{len(findings)} findings")
-        self.apply_btn.setEnabled(len(findings) > 0)
-        self.scan_btn.setEnabled(True)
         self.progress.setVisible(False)
+        self.main_window.set_busy(False)
         self.main_window.log(
             f"[Phase {self.phase_num}] Scan complete: {len(findings)} findings."
         )
 
     def on_error(self, msg: str):
-        self.scan_btn.setEnabled(True)
-        self.apply_btn.setEnabled(False)
         self.progress.setVisible(False)
+        self.main_window.set_busy(False)
         QMessageBox.critical(self, "Scan Error", msg)
         self.main_window.log(f"[Phase {self.phase_num}] ERROR: {msg}")
 
@@ -318,8 +315,7 @@ class PhaseTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self.scan_btn.setEnabled(False)
-        self.apply_btn.setEnabled(False)
+        self.main_window.set_busy(True)
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self.main_window.log(
@@ -346,7 +342,6 @@ class PhaseTab(QWidget):
         QMessageBox.information(self, f"Phase {self.phase_num} – {self.title}", self._help_text)
 
     def on_apply_done(self, ok: int, fail: int):
-        self.scan_btn.setEnabled(True)
         self.progress.setVisible(False)
         self.main_window.log(
             f"[Phase {self.phase_num}] Done: {ok} succeeded, {fail} failed."
@@ -399,28 +394,23 @@ class Phase1Tab(PhaseTab):
 # ============================================================================
 
 class Phase2Tab(PhaseTab):
-    """Phase 2 works folder-by-folder — the Scan button opens a folder picker."""
-
     def __init__(self, main_window):
         super().__init__(
             main_window, 2, "Prefix Removal",
-            "Detect & strip shared prefixes from a folder of samples. "
-            "Pick a folder to scan.",
+            "Scan all subfolders for shared filename prefixes. "
+            "Edit the 'Detected Prefix' column before applying.",
             help_text=(
-                "Detects and strips shared filename prefixes within a single folder. "
-                "Example — a folder containing:\n"
+                "Scans every subfolder under the base directory for shared filename "
+                "prefixes. Example — a folder containing:\n"
                 "  KickDrum_Tight.wav, KickDrum_Open.wav, KickDrum_Hard.wav …\n"
                 "→ the prefix \"KickDrum_\" is identified and stripped from all of them.\n\n"
                 "Detection thresholds (config.json):\n"
                 "  • Minimum prefix length: 8 characters\n"
                 "  • Minimum group size: 3 files must share the prefix\n"
                 "  • Short-name skip: folders where all names are ≤ 30 chars are ignored\n\n"
-                "You can edit the detected prefix in the table before applying.\n"
-                "Each folder is scanned separately — click \"Pick Folder & Scan\" "
-                "for each folder you want to process."
+                "You can edit the detected prefix in the table before applying."
             ),
         )
-        self.scan_btn.setText("📁 Pick Folder & Scan")
 
     def build_table(self):
         return FindingsTable(
@@ -442,47 +432,9 @@ class Phase2Tab(PhaseTab):
             rel = str(f.path)
         return [rel, prefix, len(affected), example]
 
-    def start_scan(self):
-        if not self.main_window.check_base_dir():
-            return
-        folder_str = QFileDialog.getExistingDirectory(
-            self, "Select folder to scan for prefix",
-            str(self.main_window.base_dir),
-        )
-        if not folder_str:
-            return
-        folder = Path(folder_str)
-
-        finding = core.scan_phase_2(folder)
-        if not finding:
-            manual, ok = QInputDialog.getText(
-                self, "No prefix detected",
-                f"No clear prefix found in {folder.name}.\n"
-                "Enter prefix manually (or cancel):",
-            )
-            if ok and manual:
-                try:
-                    files = [f for f in folder.iterdir()
-                             if f.is_file() and f.name.startswith(manual)]
-                except OSError:
-                    files = []
-                if files:
-                    finding = core.Finding(
-                        phase=2, path=folder,
-                        reason="manual prefix",
-                        extra={"prefix": manual,
-                               "affected_files": [str(f) for f in files]},
-                    )
-
-        if finding:
-            self.findings.append(finding)
-            self.table.set_findings(self.findings, self.row_builder)
-            self.count_label.setText(f"{len(self.findings)} folders queued")
-            self.apply_btn.setEnabled(True)
-            self.main_window.log(f"[Phase 2] Added folder: {folder.name}")
-        else:
-            QMessageBox.information(self, "No Findings",
-                                    "No prefix to remove in this folder.")
+    def scan_fn(self):
+        return (core.scan_phase_2_all,
+                (self.main_window.base_dir, self.main_window.only_new))
 
     def get_apply_extra(self, selected):
         prefixes = {}
@@ -742,6 +694,7 @@ class MainWindow(QMainWindow):
         self.base_dir: Optional[Path] = None
         self.cache: Optional[ProbeCache] = None
         self.only_new: bool = True
+        self._busy: bool = False
         self._report_thread: Optional[QThread] = None
 
         self._build_ui()
@@ -921,12 +874,35 @@ class MainWindow(QMainWindow):
         self.log(f"Report error: {msg}")
         QMessageBox.critical(self, "Report Error", msg)
 
+    def set_busy(self, busy: bool):
+        self._busy = busy
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if not hasattr(tab, 'scan_btn'):
+                continue
+            tab.scan_btn.setEnabled(not busy)
+            tab.apply_btn.setEnabled(False if busy else bool(tab.findings))
+
     def log(self, msg: str):
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_view.appendPlainText(f"[{ts}] {msg}")
 
     def closeEvent(self, event):
+        if self._busy:
+            reply = QMessageBox.warning(
+                self, "Operation in Progress",
+                "A scan or conversion is currently running.\n\n"
+                "Quitting now is safe — your audio files will not be corrupted. "
+                "Any conversion in progress may leave a temporary .__tmp__.wav file "
+                "on the drive, which you can delete manually.\n\n"
+                "Quit anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         if self.cache:
             self.cache.save()
             self.log("Cache saved.")
