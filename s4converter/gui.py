@@ -14,7 +14,7 @@ from typing import List, Optional
 
 try:
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
-    from PyQt6.QtGui import QFont
+    from PyQt6.QtGui import QFont, QTextCursor
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QLineEdit, QFileDialog, QTabWidget,
@@ -45,6 +45,7 @@ PATH_PRESETS = [
 class ScanWorker(QObject):
     """Run a scan in a background thread."""
     progress = pyqtSignal(int, int)         # done, total
+    scan_item = pyqtSignal(str)             # current file/folder being processed
     finished = pyqtSignal(list)              # List[Finding]
     error = pyqtSignal(str)
 
@@ -55,7 +56,9 @@ class ScanWorker(QObject):
 
     def run(self):
         try:
-            findings = self.scan_fn(*self.args, progress_cb=self.progress.emit)
+            findings = self.scan_fn(*self.args,
+                                     progress_cb=self.progress.emit,
+                                     file_cb=self.scan_item.emit)
             self.finished.emit(findings)
         except Exception as e:
             self.error.emit(str(e))
@@ -197,6 +200,11 @@ class PhaseTab(QWidget):
         self._help_text = help_text
         self.findings: List[core.Finding] = []
         self.thread: Optional[QThread] = None
+        self._all_top: List[str] = []
+        self._completed_top: set = set()
+        self._active_top: str = ""
+        self._active_full_path: str = ""
+        self._current_file: str = ""
 
         layout = QVBoxLayout(self)
 
@@ -244,6 +252,16 @@ class PhaseTab(QWidget):
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
 
+        self._status = QPlainTextEdit()
+        self._status.setReadOnly(True)
+        self._status.setMaximumHeight(160)
+        self._status.setVisible(False)
+        status_font = QFont("Menlo, Consolas, monospace")
+        status_font.setPointSize(11)
+        self._status.setFont(status_font)
+        self._status.setStyleSheet("background: transparent; border: none; color: #ccc;")
+        layout.addWidget(self._status)
+
         self.table = self.build_table()
         layout.addWidget(self.table)
 
@@ -263,9 +281,12 @@ class PhaseTab(QWidget):
         if not self.main_window.check_base_dir():
             return
 
+        self._reset_scan_status()
         self.main_window.set_busy(True)
         self.progress.setVisible(True)
         self.progress.setValue(0)
+        self._status.setVisible(True)
+        self._render_status()
         self.main_window.log(f"[Phase {self.phase_num}] Scanning...")
 
         self.thread = QThread()
@@ -274,6 +295,7 @@ class PhaseTab(QWidget):
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
+        self.worker.scan_item.connect(self.on_scan_item)
         self.worker.finished.connect(self.on_scan_done)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)
@@ -286,10 +308,14 @@ class PhaseTab(QWidget):
             self.progress.setValue(done)
 
     def on_scan_done(self, findings: list):
+        if self._active_top:
+            self._completed_top.add(self._active_top)
+            self._active_top = ""
         self.findings = findings
         self.table.set_findings(findings, self.row_builder)
         self.count_label.setText(f"{len(findings)} findings")
         self.progress.setVisible(False)
+        self._status.setVisible(False)
         self.main_window.set_busy(False)
         self.main_window.log(
             f"[Phase {self.phase_num}] Scan complete: {len(findings)} findings."
@@ -297,9 +323,72 @@ class PhaseTab(QWidget):
 
     def on_error(self, msg: str):
         self.progress.setVisible(False)
+        self._status.setVisible(False)
         self.main_window.set_busy(False)
         QMessageBox.critical(self, "Scan Error", msg)
         self.main_window.log(f"[Phase {self.phase_num}] ERROR: {msg}")
+
+    def _reset_scan_status(self):
+        self._completed_top = set()
+        self._active_top = ""
+        self._active_full_path = ""
+        self._current_file = ""
+        base = self.main_window.base_dir
+        if base and base.exists():
+            try:
+                self._all_top = sorted([
+                    d.name for d in base.iterdir()
+                    if d.is_dir()
+                    and not d.name.startswith(".")
+                    and d.name not in config.EXCLUDED_FOLDER_NAMES
+                ])
+            except OSError:
+                self._all_top = []
+        else:
+            self._all_top = []
+
+    def on_scan_item(self, path: str):
+        base = self.main_window.base_dir
+        if base is None:
+            return
+        try:
+            rel = Path(path).relative_to(base)
+            top = rel.parts[0] if rel.parts else ""
+        except ValueError:
+            top = ""
+
+        if top and top != self._active_top:
+            if self._active_top:
+                self._completed_top.add(self._active_top)
+            self._active_top = top
+
+        self._active_full_path = path
+        self._current_file = Path(path).name
+        self._render_status()
+
+    def _render_status(self):
+        lines = []
+        for folder in self._all_top:
+            if folder in self._completed_top:
+                lines.append(f"✓  {folder}")
+            elif folder == self._active_top:
+                lines.append(f"▶  {self._active_full_path}")
+                if self._current_file:
+                    lines.append(f"    ⟳  {self._current_file}")
+
+        pending = [f for f in self._all_top
+                   if f not in self._completed_top and f != self._active_top]
+        if pending:
+            lines.append("")
+            lines.append("── Pending " + "─" * 28)
+            for f in pending:
+                lines.append(f"   {f}")
+
+        self._status.setPlainText("\n".join(lines))
+        cursor = self._status.document().find("▶")
+        if not cursor.isNull():
+            self._status.setTextCursor(cursor)
+            self._status.ensureCursorVisible()
 
     def start_apply(self):
         selected = self.table.get_selected_findings()

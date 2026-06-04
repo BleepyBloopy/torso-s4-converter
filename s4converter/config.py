@@ -6,6 +6,7 @@ This module loads it and fills in defaults for anything not present.
 """
 
 import json
+import os
 from pathlib import Path
 
 _CONFIG_JSON = Path(__file__).parent.parent / "config.json"
@@ -14,7 +15,19 @@ _CONFIG_JSON = Path(__file__).parent.parent / "config.json"
 def _load() -> dict:
     if _CONFIG_JSON.exists():
         try:
-            return json.loads(_CONFIG_JSON.read_text())
+            # Use os.open() to avoid triggering macOS Launch Services,
+            # which would otherwise open config.json in the default JSON app.
+            fd = os.open(str(_CONFIG_JSON), os.O_RDONLY)
+            try:
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            finally:
+                os.close(fd)
+            return json.loads(b"".join(chunks))
         except Exception:
             pass
     return {}

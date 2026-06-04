@@ -152,10 +152,18 @@ def ffprobe(path: Path, cache: Optional[ProbeCache] = None) -> Optional[AudioInf
     return audio_info
 
 
+def _probe_item(path: Path, cache: Optional[ProbeCache],
+                file_cb: Optional[Callable[[str], None]]) -> Optional[AudioInfo]:
+    if file_cb:
+        file_cb(str(path))
+    return ffprobe(path, cache)
+
+
 def parallel_ffprobe(paths: List[Path], cache: Optional[ProbeCache],
                      progress_cb: Optional[Callable[[int, int], None]] = None,
                      workers: int = config.PARALLEL_FFPROBE_WORKERS,
                      chunk_size: int = config.FFPROBE_CHUNK_SIZE,
+                     file_cb: Optional[Callable[[str], None]] = None,
                      ) -> List[Tuple[Path, Optional[AudioInfo]]]:
     """Run ffprobe in parallel, processing in chunks to bound memory usage."""
     results: List[Tuple[Path, Optional[AudioInfo]]] = []
@@ -164,7 +172,7 @@ def parallel_ffprobe(paths: List[Path], cache: Optional[ProbeCache],
     for chunk_start in range(0, total, chunk_size):
         chunk = paths[chunk_start:chunk_start + chunk_size]
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = {ex.submit(ffprobe, p, cache): p for p in chunk}
+            futures = {ex.submit(_probe_item, p, cache, file_cb): p for p in chunk}
             for fut in as_completed(futures):
                 p = futures[fut]
                 try:    info = fut.result()
@@ -231,6 +239,7 @@ def check_drive_present(base_dir: Path) -> bool:
 
 def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
+                 file_cb: Optional[Callable[[str], None]] = None,
                  ) -> List[Finding]:
     """Flag all audio files that need format correction.
 
@@ -244,7 +253,7 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     if not candidates:
         return findings
 
-    results   = parallel_ffprobe(candidates, cache, progress_cb)
+    results   = parallel_ffprobe(candidates, cache, progress_cb, file_cb=file_cb)
     target_sr = int(config.FORCE_AR)
 
     for path, info in results:
@@ -386,6 +395,7 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None) -> in
 
 def scan_phase_2_all(base_dir: Path, only_new: bool = False,
                      progress_cb: Optional[Callable[[int, int], None]] = None,
+                     file_cb: Optional[Callable[[str], None]] = None,
                      ) -> List[Finding]:
     """Scan every subfolder under base_dir for shared filename prefixes."""
     folders: List[Path] = []
@@ -401,6 +411,8 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
     for i, folder in enumerate(folders, 1):
         if progress_cb:
             progress_cb(i, len(folders))
+        if file_cb:
+            file_cb(str(folder))
         finding = scan_phase_2(folder)
         if finding:
             findings.append(finding)
@@ -437,6 +449,7 @@ def suggest_short_names(name: str) -> List[str]:
 
 def scan_phase_3(base_dir: Path, only_new: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
+                 file_cb: Optional[Callable[[str], None]] = None,
                  ) -> List[Finding]:
     findings  = []
     all_files = list(iter_files(base_dir, skip_clean_folders=only_new))
@@ -444,6 +457,8 @@ def scan_phase_3(base_dir: Path, only_new: bool = False,
     for i, path in enumerate(all_files):
         if progress_cb and i % 50 == 0:
             progress_cb(i, total)
+        if file_cb:
+            file_cb(str(path))
         if len(path.stem) > config.NAME_LENGTH_LIMIT:
             suggestions = suggest_short_names(path.name)
             findings.append(Finding(
@@ -534,13 +549,14 @@ def analyze_stereo(path: Path) -> Optional[StereoAnalysis]:
 def scan_phase_4(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  include_near_mono: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
+                 file_cb: Optional[Callable[[str], None]] = None,
                  ) -> List[Finding]:
     findings   = []
     candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
     if not candidates:
         return findings
 
-    probe_results = parallel_ffprobe(candidates, cache, progress_cb=None)
+    probe_results = parallel_ffprobe(candidates, cache, progress_cb=None, file_cb=file_cb)
     stereo_files  = [p for p, info in probe_results if info is not None and info.channels == 2]
     if not stereo_files:
         return findings
@@ -550,6 +566,8 @@ def scan_phase_4(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     for i, path in enumerate(stereo_files, 1):
         if progress_cb:
             progress_cb(i, len(stereo_files))
+        if file_cb:
+            file_cb(str(path))
         try:
             stat = path.stat()
         except OSError:
@@ -673,6 +691,7 @@ def detect_silence_bounds(path: Path,
 
 def scan_phase_5(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
+                 file_cb: Optional[Callable[[str], None]] = None,
                  ) -> List[Finding]:
     findings   = []
     candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
@@ -684,6 +703,8 @@ def scan_phase_5(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     for i, path in enumerate(candidates, 1):
         if progress_cb:
             progress_cb(i, len(candidates))
+        if file_cb:
+            file_cb(str(path))
         try:    stat = path.stat()
         except: continue
         if max_bytes and stat.st_size > max_bytes:
@@ -844,6 +865,7 @@ def _stem_has_bpm(path: Path) -> bool:
 
 def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  progress_cb: Optional[Callable[[int, int], None]] = None,
+                 file_cb: Optional[Callable[[str], None]] = None,
                  ) -> List[Finding]:
     """Detect BPM for WAV files that appear to be rhythmic loops."""
     findings   = []
@@ -853,7 +875,7 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
 
     # First pass: use cached probe data to filter by duration (fast)
     # Also skip files whose names already contain a BPM value.
-    probe_results = parallel_ffprobe(candidates, cache, progress_cb=None)
+    probe_results = parallel_ffprobe(candidates, cache, progress_cb=None, file_cb=file_cb)
     duration_candidates = [
         (p, info) for p, info in probe_results
         if info is not None
@@ -865,6 +887,8 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     for i, (path, info) in enumerate(duration_candidates, 1):
         if progress_cb:
             progress_cb(i, total)
+        if file_cb:
+            file_cb(str(path))
 
         try:    stat = path.stat()
         except: continue
