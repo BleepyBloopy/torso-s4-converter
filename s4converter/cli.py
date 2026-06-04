@@ -309,7 +309,8 @@ def run_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool, dry_run: bool
         print(f"{C.GREEN}No rhythmic loops detected.{C.END}")
         return
 
-    print(f"\nDetected BPM for {len(findings)} files (all unselected by default):")
+    auto = sum(1 for f in findings if f.selected)
+    print(f"\nDetected BPM for {len(findings)} files ({auto} high-confidence auto-selected):")
     for f in findings[:15]:
         bpm  = f.extra.get("bpm", "?")
         conf = f.extra.get("conf_label", "?")

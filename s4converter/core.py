@@ -871,7 +871,7 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
             reason=f"{int(bpm_val)} BPM",
             current=path.name,
             target=new_name,
-            selected=False,   # opt-in — user must explicitly check to rename
+            selected=(confidence >= 0.75),  # auto-select high confidence; med/low opt-in
             extra={"bpm": bpm_val, "confidence": confidence,
                    "conf_label": conf_label, "duration": info.duration},
         ))

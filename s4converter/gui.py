@@ -641,7 +641,8 @@ class Phase6Tab(PhaseTab):
                 f"{config.BPM_TARGET_MIN}–{config.BPM_TARGET_MAX} BPM.\n"
                 "  5. Folder name hints — folders named 'one shot', 'sfx', "
                 "'ambient', etc. are skipped entirely.\n\n"
-                "ALL rows start UNCHECKED — review BPM values before renaming.\n"
+                "High-confidence detections (≥ 0.75) start CHECKED automatically.\n"
+                "Med and Low confidence rows start unchecked — review before selecting.\n"
                 "Edit the 'New Name' column to customise the filename.\n\n"
                 "Requires: pip install aubio"
             ),
