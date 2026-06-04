@@ -12,7 +12,7 @@ A Python tool to standardize and organize audio sample libraries for the **Torso
 # First-time setup (installs ffmpeg, uv, venv, and all Python deps) — macOS
 ./setup.sh
 
-# Launch (macOS: double-click launch.command, or from terminal:)
+# Launch (macOS: double-click launch-s4converter-MacOS.command, or from terminal:)
 uv run python -m s4converter.gui
 
 # Run CLI (all phases, interactive)

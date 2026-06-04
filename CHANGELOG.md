@@ -2,6 +2,30 @@
 
 ---
 
+## [v7.1] – 2026-06-04
+
+### Added
+- **`setup.sh`** — first-time setup script for macOS/Linux; installs ffmpeg + uv via Homebrew, creates venv, installs Python deps with aubio CFLAGS workaround
+- **`launch-s4converter-MacOS.command`** — double-click launcher for macOS; runs `setup.sh` automatically on first launch
+- **`launch-s4converter-Windows.bat`** — double-click launcher for Windows; checks for ffmpeg/uv then sets up venv
+- **`core.open_folder()`** — cross-platform file manager opener replacing macOS-only `open` subprocess calls (`xdg-open` on Linux, `explorer` on Windows)
+- **Global busy lock** — all scan/apply buttons across all tabs are disabled while any operation is running; re-enabled with correct state on completion
+- **Quit guard** — warns before closing if a scan or apply is in progress; explains files are safe but a `.__tmp__.wav` may remain
+- **`scan_phase_2_all()`** — Phase 2 now auto-scans all subfolders like every other phase instead of requiring manual folder-by-folder selection via folder picker
+- **`config.json` dual paths** — `s4_root` + `usb_root` replace the single `base_dir`; GUI drive dropdown presets are now sourced from config values
+- **Memory safeguards for large drives** — `parallel_ffprobe` processes files in configurable chunks (default 500); Phases 4 and 5 skip files above `analysis_max_size_mb` (default 200 MB) to prevent OOM when scanning USB root directories
+- **CLAUDE.md** — codebase documentation for Claude Code
+
+### Changed
+- Phase 6 (BPM detection): high-confidence results (≥ 0.75) are now **checked by default** following S-4 OS v2.2 confirmation that BPM-in-filename is required for proper DISC sync-mode loading
+- `PARALLEL_FFPROBE_WORKERS` reduced from 4 → 2 (configurable via `ffprobe_workers` in `config.json`)
+- Phase 2 tab label and help text updated to reflect auto-scan behaviour
+
+### Fixed
+- Drive dropdown presets were hardcoded; now read from `config.USB_ROOT` and `config.S4_ROOT`
+
+---
+
 ## [v7.0] – 2026-05-27
 
 Complete rewrite of the original single-file script into a structured Python package.

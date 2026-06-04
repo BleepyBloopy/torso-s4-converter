@@ -20,8 +20,8 @@ Clone or download the repo, then double-click the launcher for your platform:
 
 | Platform | File | What it does |
 |----------|------|-------------|
-| macOS | `launch.command` | Runs setup on first launch, then opens the GUI |
-| Windows | `launch.bat` | Checks dependencies, then opens the GUI |
+| macOS | `launch-s4converter-MacOS.command` | Runs setup on first launch, then opens the GUI |
+| Windows | `launch-s4converter-Windows.bat` | Checks dependencies, then opens the GUI |
 
 **macOS first-time note:** macOS may show a "downloaded from internet" warning the first time — right-click → Open to allow it. It won't ask again.
 
@@ -146,6 +146,19 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 | `stereo_loose_threshold_db` | `-60.0` | near_mono threshold (Phase 4) |
 | `bpm_min_confidence` | `0.4` | Minimum confidence to report a BPM result |
 | `bpm_skip_folder_hints` | (list) | Folder name substrings that skip BPM detection |
+
+---
+
+## Platform Support
+
+| Feature | macOS | Windows | Linux |
+|---------|-------|---------|-------|
+| GUI | ✅ | ✅ | ✅ |
+| CLI | ✅ | ✅ | ✅ |
+| Phase 1–5 | ✅ | ✅ | ✅ |
+| Phase 6 (BPM) | ✅ | ⚠️ untested | ✅ |
+| One-click launcher | ✅ `launch-s4converter-MacOS.command` | ✅ `launch-s4converter-Windows.bat` | run `./setup.sh` then `uv run python -m s4converter.gui` |
+| Auto-setup | ✅ via Homebrew | manual (winget) | manual (apt/pacman) |
 
 ---
 
