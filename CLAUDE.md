@@ -19,17 +19,17 @@ uv venv .venv
 CFLAGS="-Wno-incompatible-function-pointer-types" uv pip install -r requirements.txt --python .venv/bin/python
 
 # Run GUI
-.venv/bin/python -m s4converter.gui
+uv run python -m s4converter.gui
 
 # Run CLI (all phases, interactive)
-python3 -m s4converter.cli --path /Volumes/S-4/SAMPLES
+uv run python -m s4converter.cli --path /Volumes/S-4/SAMPLES
 
 # Common CLI flags
-python3 -m s4converter.cli --quick          # Phase 1 only, no prompts
-python3 -m s4converter.cli --dry-run        # Preview only, no changes
-python3 -m s4converter.cli --phases 1,4     # Run specific phases only
-python3 -m s4converter.cli --full-scan      # Ignore folder markers, re-scan everything
-python3 -m s4converter.cli --report         # Export CSV + Markdown library report
+uv run python -m s4converter.cli --quick          # Phase 1 only, no prompts
+uv run python -m s4converter.cli --dry-run        # Preview only, no changes
+uv run python -m s4converter.cli --phases 1,4     # Run specific phases only
+uv run python -m s4converter.cli --full-scan      # Ignore folder markers, re-scan everything
+uv run python -m s4converter.cli --report         # Export CSV + Markdown library report
 ```
 
 No test suite exists. No build step.
