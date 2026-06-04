@@ -2,6 +2,18 @@
 
 ---
 
+## [v7.2] – 2026-06-04
+
+### Fixed
+- **OOM crash during scan** — `QTextEdit` undo stack no longer accumulates one entry per file scanned (disabled via `setUndoRedoEnabled(False)`); folder tree now only re-renders on folder transitions, not every file; current filename moved to a cheap `QLabel`
+- **OOM crash at scan completion** — `QTableWidget` population now uses `setUpdatesEnabled(False)` to suppress repaint cascades; display capped at 5 000 rows (all findings still included in Apply)
+- **UTF-8 crash on filenames with special characters** — all `subprocess.run` calls in `core.py` and cache load/save in `cache.py` now use `encoding="utf-8", errors="replace"` so filenames containing `©`, `é`, etc. no longer crash ffprobe, ffmpeg, or cache I/O
+
+### Added
+- **Apply progress feedback** — progress bar now shows an accurate `X / Y files` count label and a `⟳ filename` line while Apply is running, matching the scan feedback style
+
+---
+
 ## [v7.1] – 2026-06-04
 
 ### Added

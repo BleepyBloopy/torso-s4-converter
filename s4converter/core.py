@@ -103,7 +103,7 @@ def ffprobe(path: Path, cache: Optional[ProbeCache] = None) -> Optional[AudioInf
              "-show_entries",
              "format=duration:stream=bits_per_sample,bits_per_raw_sample,sample_fmt,sample_rate,channels",
              "-of", "json", str(path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace", timeout=30,
         )
         if res.returncode != 0 or not res.stdout.strip():
             return None
@@ -198,7 +198,7 @@ def convert_to_wav(src: Path, dst: Path, target_sr: Optional[str] = None) -> boo
     cmd += ["-ar", target_sr, "-f", "wav", "-c:a", config.WAV_CODEC_16, str(dst)]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, timeout=300)
+                             encoding="utf-8", errors="replace", timeout=300)
         return res.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -520,7 +520,7 @@ def analyze_stereo(path: Path) -> Optional[StereoAnalysis]:
              "-af", filter_expr + ",astats=metadata=1:reset=0", "-f", "null", "-"]
         try:
             res = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, timeout=60)
+                                 encoding="utf-8", errors="replace", timeout=60)
         except (subprocess.TimeoutExpired, OSError):
             return None
         for line in res.stderr.split("\n"):
@@ -644,7 +644,7 @@ def apply_phase_4(finding: Finding) -> bool:
              "-c:a", config.WAV_CODEC_16, "-ar", config.FORCE_AR, str(tmp)]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, timeout=300)
+                             encoding="utf-8", errors="replace", timeout=300)
         if res.returncode != 0:
             _cleanup_tmp(tmp)
             return False
@@ -677,7 +677,7 @@ def detect_silence_bounds(path: Path,
               "-f", "null", "-"]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, timeout=120)
+                             encoding="utf-8", errors="replace", timeout=120)
     except (subprocess.TimeoutExpired, OSError):
         return None
 
@@ -776,7 +776,7 @@ def apply_phase_5(finding: Finding) -> bool:
            "-af", ",".join(filters), "-c:a", config.WAV_CODEC_16, "-ar", config.FORCE_AR, str(tmp)]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, timeout=300)
+                             encoding="utf-8", errors="replace", timeout=300)
         if res.returncode != 0:
             _cleanup_tmp(tmp)
             return False

@@ -53,9 +53,9 @@ class ProbeCache:
     def load(self) -> None:
         if self.cache_file.exists():
             try:
-                with open(self.cache_file, "r") as f:
+                with open(self.cache_file, "r", encoding="utf-8", errors="replace") as f:
                     self._data = json.load(f)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 self._data = {}
 
     def save(self) -> None:
@@ -63,8 +63,8 @@ class ProbeCache:
             return
         try:
             tmp = self.cache_file.with_suffix(".tmp")
-            with open(tmp, "w") as f:
-                json.dump(self._data, f)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=True)
             tmp.replace(self.cache_file)
             self._dirty = False
         except OSError:

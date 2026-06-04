@@ -77,6 +77,7 @@ class ScanWorker(QObject):
 class ApplyWorker(QObject):
     """Apply actions in a background thread."""
     progress = pyqtSignal(int, int)
+    current_file = pyqtSignal(str)            # filename being processed right now
     finished = pyqtSignal(int, int)          # ok, fail
     error = pyqtSignal(str)
 
@@ -91,6 +92,7 @@ class ApplyWorker(QObject):
         total = len(self.findings)
         try:
             for i, f in enumerate(self.findings, 1):
+                self.current_file.emit(Path(f.path).name)
                 if self.extra_args.get("new_names"):
                     result = self.apply_fn(f, self.extra_args["new_names"].get(id(f), ""))
                 elif self.extra_args.get("prefixes"):
@@ -130,6 +132,9 @@ class ReportWorker(QObject):
 # Findings table widget
 # ============================================================================
 
+_TABLE_DISPLAY_CAP = 5000
+
+
 class FindingsTable(QTableWidget):
     """Table that displays findings with a checkbox per row."""
 
@@ -137,7 +142,7 @@ class FindingsTable(QTableWidget):
         super().__init__()
         self.columns = ["✓"] + columns
         self.editable_col = editable_col  # column index in the full table (0 = checkbox)
-        self.findings: List[core.Finding] = []
+        self.findings: List[core.Finding] = []  # full list, may exceed display cap
 
         self.setColumnCount(len(self.columns))
         self.setHorizontalHeaderLabels(self.columns)
@@ -153,9 +158,13 @@ class FindingsTable(QTableWidget):
     def set_findings(self, findings: List[core.Finding], row_builder):
         """row_builder(finding) -> list of strings (one per non-checkbox column)."""
         self.findings = findings
-        self.setRowCount(len(findings))
+        display = findings[:_TABLE_DISPLAY_CAP]
 
-        for row, f in enumerate(findings):
+        self.setUpdatesEnabled(False)
+        self.setSortingEnabled(False)
+        self.setRowCount(len(display))
+
+        for row, f in enumerate(display):
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             chk.setCheckState(Qt.CheckState.Checked if f.selected else Qt.CheckState.Unchecked)
@@ -167,14 +176,21 @@ class FindingsTable(QTableWidget):
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.setItem(row, col, item)
 
-        self.resizeColumnsToContents()
+        self.setUpdatesEnabled(True)
 
     def get_selected_findings(self) -> List[core.Finding]:
         selected = []
-        for row, f in enumerate(self.findings):
+        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
+        # Sync checkbox state for visible rows.
+        for row in range(displayed):
+            f = self.findings[row]
             checked = self.item(row, 0).checkState() == Qt.CheckState.Checked
             f.selected = checked
             if checked:
+                selected.append(f)
+        # Hidden rows (beyond cap) keep their default selected state.
+        for f in self.findings[displayed:]:
+            if f.selected:
                 selected.append(f)
         return selected
 
@@ -183,6 +199,8 @@ class FindingsTable(QTableWidget):
             return ""
         try:
             row = self.findings.index(finding)
+            if row >= _TABLE_DISPLAY_CAP:
+                return ""
             return self.item(row, self.editable_col).text()
         except (ValueError, AttributeError):
             return ""
@@ -192,6 +210,9 @@ class FindingsTable(QTableWidget):
             self.item(row, 0).setCheckState(
                 Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
             )
+        # Also update hidden findings beyond the cap.
+        for f in self.findings[_TABLE_DISPLAY_CAP:]:
+            f.selected = checked
 
 
 # ============================================================================
@@ -210,6 +231,7 @@ class PhaseTab(QWidget):
         self._help_text = help_text
         self.findings: List[core.Finding] = []
         self.thread: Optional[QThread] = None
+        self._applying: bool = False
         self._all_top: List[str] = []
         self._seen_top: set = set()     # folders we've seen at least one file from
         self._active_top: str = ""      # most recently seen top-level folder
@@ -270,13 +292,22 @@ class PhaseTab(QWidget):
 
         self._status = QTextEdit()
         self._status.setReadOnly(True)
-        self._status.setMaximumHeight(160)
+        self._status.setUndoRedoEnabled(False)
+        self._status.setMaximumHeight(140)
         self._status.setVisible(False)
         status_font = QFont("Menlo, Consolas, monospace")
         status_font.setPointSize(11)
         self._status.setFont(status_font)
         self._status.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self._status)
+
+        self._current_file_label = QLabel("")
+        self._current_file_label.setVisible(False)
+        cur_font = QFont("Menlo, Consolas, monospace")
+        cur_font.setPointSize(11)
+        self._current_file_label.setFont(cur_font)
+        self._current_file_label.setStyleSheet("color: #444; padding-left: 24px;")
+        layout.addWidget(self._current_file_label)
 
         self.table = self.build_table()
         layout.addWidget(self.table)
@@ -302,6 +333,7 @@ class PhaseTab(QWidget):
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self._status.setVisible(True)
+        self._current_file_label.setVisible(True)
         self.stop_btn.setVisible(True)
         self.count_label.setText("Scanning…")
         self._render_status()
@@ -326,14 +358,23 @@ class PhaseTab(QWidget):
         if total > 0:
             self.progress.setMaximum(total)
             self.progress.setValue(done)
+            if self._applying:
+                self.count_label.setText(f"{done:,} / {total:,} files")
 
     def on_scan_done(self, findings: list):
         self._active_top = ""
         self.findings = findings
         self.table.set_findings(findings, self.row_builder)
-        self.count_label.setText(f"{len(findings)} findings")
+        n = len(findings)
+        if n > _TABLE_DISPLAY_CAP:
+            self.count_label.setText(
+                f"{n} findings  (showing first {_TABLE_DISPLAY_CAP} — all included in Apply)"
+            )
+        else:
+            self.count_label.setText(f"{n} findings")
         self.progress.setVisible(False)
         self._status.setVisible(False)
+        self._current_file_label.setVisible(False)
         self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         self.main_window.log(
@@ -343,6 +384,7 @@ class PhaseTab(QWidget):
     def on_scan_stopped(self):
         self.progress.setVisible(False)
         self._status.setVisible(False)
+        self._current_file_label.setVisible(False)
         self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         if self.main_window.cache:
@@ -350,11 +392,13 @@ class PhaseTab(QWidget):
         self.main_window.log(f"[{self.title}] Scan stopped. Cache saved.")
 
     def on_error(self, msg: str):
+        self._applying = False
         self.progress.setVisible(False)
         self._status.setVisible(False)
+        self._current_file_label.setVisible(False)
         self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
-        QMessageBox.critical(self, "Scan Error", msg)
+        QMessageBox.critical(self, "Error", msg)
         self.main_window.log(f"[{self.title}] ERROR: {msg}")
 
     def _request_stop(self):
@@ -371,6 +415,7 @@ class PhaseTab(QWidget):
         self._active_top = ""
         self._active_full_path = ""
         self._current_file = ""
+        self._current_file_label.setText("")
         base = self.main_window.base_dir
         if base and base.exists():
             try:
@@ -395,12 +440,19 @@ class PhaseTab(QWidget):
         except ValueError:
             top = ""
 
+        folder_changed = top and top != self._active_top
         if top:
             self._seen_top.add(top)
             self._active_top = top
         self._active_full_path = path
         self._current_file = Path(path).name
-        self._render_status()
+
+        # Only rebuild the full HTML tree on folder transitions — not every file.
+        if folder_changed:
+            self._render_status()
+
+        # Current file updates cheaply via QLabel (no undo stack, no DOM rebuild).
+        self._current_file_label.setText(f"⟳  {self._current_file}")
 
     def _render_status(self):
         import html as _html
@@ -413,10 +465,6 @@ class PhaseTab(QWidget):
                 parts.append(
                     f'<div style="color:#0d47a1; font-weight:bold;">▶&nbsp;&nbsp;{esc(active_folder)}</div>'
                 )
-                if self._current_file:
-                    parts.append(
-                        f'<div style="color:#444444;">&nbsp;&nbsp;&nbsp;&nbsp;⟳&nbsp;&nbsp;{esc(self._current_file)}</div>'
-                    )
             elif folder in self._seen_top:
                 parts.append(f'<div style="color:#2e7d32;">✓&nbsp;&nbsp;{esc(folder)}</div>')
 
@@ -447,8 +495,13 @@ class PhaseTab(QWidget):
             return
 
         self.main_window.set_busy(True)
+        self._applying = True
         self.progress.setVisible(True)
+        self.progress.setMaximum(len(selected))
         self.progress.setValue(0)
+        self._current_file_label.setText("")
+        self._current_file_label.setVisible(True)
+        self.count_label.setText(f"0 / {len(selected):,} files")
         self.main_window.log(
             f"[{self.title}] Applying to {len(selected)} items..."
         )
@@ -460,6 +513,7 @@ class PhaseTab(QWidget):
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
+        self.worker.current_file.connect(self._on_apply_file)
         self.worker.finished.connect(self.on_apply_done)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)
@@ -469,11 +523,17 @@ class PhaseTab(QWidget):
     def get_apply_extra(self, selected: list) -> dict:
         return {}
 
+    def _on_apply_file(self, filename: str):
+        self._current_file_label.setText(f"⟳  {filename}")
+
     def _show_help(self):
         QMessageBox.information(self, self.title, self._help_text)
 
     def on_apply_done(self, ok: int, fail: int):
+        self._applying = False
         self.progress.setVisible(False)
+        self._current_file_label.setVisible(False)
+        self._current_file_label.setText("")
         self.main_window.log(
             f"[{self.title}] Done: {ok} succeeded, {fail} failed."
         )
@@ -596,14 +656,20 @@ class NamesTab(PhaseTab):
             return core.apply_phase_3(finding, edited)
 
         self.main_window.set_busy(True)
+        self._applying = True
         self.progress.setVisible(True)
+        self.progress.setMaximum(len(selected))
         self.progress.setValue(0)
+        self._current_file_label.setText("")
+        self._current_file_label.setVisible(True)
+        self.count_label.setText(f"0 / {len(selected):,} files")
         self.main_window.log(f"[{self.title}] Applying to {len(selected)} items...")
         self.thread = QThread()
         self.worker = ApplyWorker(apply_fn, selected)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
+        self.worker.current_file.connect(self._on_apply_file)
         self.worker.finished.connect(self.on_apply_done)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)

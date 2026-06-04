@@ -46,9 +46,9 @@ uv run python -m s4converter.gui
 1. Select your drive from the dropdown (or set a custom path) and click **Load**
 2. Click into a phase tab and click **Scan**
 3. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
-4. Review findings in the table; uncheck anything you don't want to change
+4. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
 5. For Phase 2 (names) and Phase 4 (BPM), edit values inline if needed
-6. Click **Apply Selected**
+6. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
 

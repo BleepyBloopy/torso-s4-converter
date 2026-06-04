@@ -57,11 +57,15 @@ Internal phase numbers (used in `Finding.phase` and core functions) are still 1�
 
 **scan/apply split:** Every phase has `scan_phase_N()` → `List[Finding]` and `apply_phase_N(finding)`. Scan is always read-only. GUI and CLI call them the same way.
 
+**`FindingsTable` display cap:** `_TABLE_DISPLAY_CAP = 5000`. Tables with more findings only render the first 5 000 rows to avoid OOM from `QTableWidgetItem` allocation. `get_selected_findings()` and `select_all()` handle findings beyond the cap via the `f.selected` flag directly. The count label shows "X findings (showing first 5 000 — all included in Apply)" when the cap is hit.
+
 **`Finding` dataclass** (`core.py`): `phase`, `path`, `reason`, `current`, `target`, `suggested_name`, `extra` (phase-specific dict), `selected` (bool). The `extra` dict carries phase-specific data (e.g. `{"type": "non_wav"}` for phase 1, `{"classification": "dual_mono", "keep_channel": "L"}` for phase 4).
 
 **Atomic writes:** All conversions write to `stem.__tmp__.wav` then `os.replace()` onto the target. `_cleanup_tmp()` removes the temp on failure.
 
-**`ProbeCache`** (`cache.py`): Keyed by `"path|mtime|size"`. Stores ffprobe results in `.s4_cache.json` at the base dir. Phases 4, 5, and 6 also store their own analysis results directly in `cache._data` using prefixed keys (`"stereo|..."`, `"silence|..."`, `"bpm|..."`). `cache.save()` is always called at the end of a run.
+**`ProbeCache`** (`cache.py`): Keyed by `"path|mtime|size"`. Stores ffprobe results in `.s4_cache.json` at the base dir. Phases 4, 5, and 6 also store their own analysis results directly in `cache._data` using prefixed keys (`"stereo|..."`, `"silence|..."`, `"bpm|..."`). `cache.save()` is always called at the end of a run. Cache I/O uses `encoding="utf-8", errors="replace"` to survive filenames with non-ASCII characters (©, é, etc.).
+
+**Subprocess encoding:** All `subprocess.run` calls in `core.py` use `encoding="utf-8", errors="replace"` (never bare `text=True`) so that ffprobe/ffmpeg output containing non-ASCII filenames does not raise `UnicodeDecodeError`.
 
 **`FolderMarkers`:** After a successful apply, a `.s4_processed` hidden file is touched in each folder. Incremental scans (`only_new=True`) skip folders where no file is newer than the marker. Any rename/conversion calls `FolderMarkers.invalidate(folder)` to force re-scan of that folder next time.
 
