@@ -73,4 +73,4 @@ s4converter/
 - `near_mono`: diff between -90 and -60 dB — shown only in loose mode, unselected by default
 - `true_stereo`: diff > -60 dB — never flagged
 
-**Phase 6 BPM skip logic:** Files whose stem already contains a BPM-like pattern (`\d{2,3}bpm` or surrounding separators) are skipped. Folders whose names match `bpm_skip_folder_hints` (one-shots, FX, field recordings, etc.) are also skipped.
+**Phase 6 BPM skip logic:** Files whose stem already contains a BPM-like pattern (`\d{2,3}bpm` or surrounding separators) are skipped. Folders whose names match `bpm_skip_folder_hints` are also skipped — unless the folder name contains "loop", which overrides the hint (e.g. "Kick Drums" → skip, "Kick Loops" → detect). Hints cover one-shots, FX, field recordings, and individual drum hit types (kick, snare, hat, cymbal, etc.).

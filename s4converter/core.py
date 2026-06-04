@@ -810,7 +810,7 @@ def detect_bpm(path: Path, info: AudioInfo) -> Optional[Tuple[float, float]]:
 
     # Folder hint: skip known non-loop folders
     folder_lower = path.parent.name.lower()
-    if any(hint in folder_lower for hint in config.BPM_SKIP_FOLDER_HINTS):
+    if "loop" not in folder_lower and any(hint in folder_lower for hint in config.BPM_SKIP_FOLDER_HINTS):
         return None
 
     try:

@@ -27,6 +27,7 @@
 
 ### Fixed
 - Drive dropdown presets were hardcoded; now read from `config.USB_ROOT` and `config.S4_ROOT`
+- Phase 6 BPM skip logic: folder hints now only skip when the folder name does **not** contain "loop" — e.g. "Kick Drums" is skipped but "Kick Loops" is detected. Expanded hints to include common drum hit terms: kick, snare, hat, hihat, cymbal, clap, tom, ride, crash, rimshot, 808, perc, shaker, tamb, conga, bongo
 - Drive dropdown now snaps to "Custom…" when a manually typed path doesn't match any preset
 - Cache always lives at the configured drive root (`usb_root` or `s4_root`) via `config.cache_root_for()` — scanning any subfolder (e.g. `Download Samples/drums/`) reuses the same probe data as a full-library scan; status bar and log show the cache file path
 

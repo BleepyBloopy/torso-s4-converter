@@ -18,7 +18,13 @@
   "bpm_target_min": 70,
   "bpm_target_max": 175,
   "bpm_skip_folder_hints": [
-    "one shot", "one-shot", "oneshot", "fx", "field recording",
-    "ambience", "ambient", "foley", "sfx", "hit", "hits"
+    "one shot", "one-shot", "oneshot",
+    "fx", "sfx", "foley",
+    "field recording", "ambience", "ambient",
+    "hit", "hits", "stab",
+    "kick", "snare", "hat", "hihat", "hi-hat",
+    "cymbal", "clap", "tom", "ride", "crash",
+    "rimshot", "rim", "808",
+    "perc", "shaker", "tamb", "conga", "bongo"
   ]
 }
