@@ -173,6 +173,8 @@ def parallel_ffprobe(paths: List[Path], cache: Optional[ProbeCache],
                 done += 1
                 if progress_cb:
                     progress_cb(done, total)
+        if cache is not None:
+            cache.save()  # flush after each chunk — crash-safe resume
     return results
 
 

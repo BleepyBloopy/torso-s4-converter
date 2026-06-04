@@ -17,6 +17,8 @@
 - **CLAUDE.md** — codebase documentation for Claude Code
 
 ### Changed
+- `parallel_ffprobe` saves the probe cache to disk after every chunk (default every 500 files) — crash-safe resume: restarting re-scans using cache hits so at most one chunk is re-probed
+- GUI prevents Mac idle sleep via `caffeinate -i` during any scan or apply (macOS only); terminated cleanly on completion or app close. Note: `caffeinate` prevents idle sleep but does not prevent display loss when switching monitor inputs on a shared monitor setup — use the CLI for unattended scans in that scenario, or use a headless dummy plug
 - Phase 6 (BPM detection): high-confidence results (≥ 0.75) are now **checked by default** following S-4 OS v2.2 confirmation that BPM-in-filename is required for proper DISC sync-mode loading
 - `PARALLEL_FFPROBE_WORKERS` reduced from 4 → 2 (configurable via `ffprobe_workers` in `config.json`)
 - Phase 2 tab label and help text updated to reflect auto-scan behaviour

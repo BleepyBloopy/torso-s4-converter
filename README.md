@@ -180,6 +180,31 @@ torso-s4-converter/
 
 ---
 
+## Long / Unattended Scans
+
+### Crash recovery and resume
+
+The probe cache is written to disk after every 500 files scanned. If the app crashes or is force-quit mid-scan, restarting and re-scanning picks up from the last saved point — already-probed files are cache hits and are skipped instantly. Folders where changes were already applied have markers set and are skipped by the fast scan too. At worst you lose one 500-file chunk of probe work.
+
+### Mac idle sleep
+
+The GUI automatically prevents your Mac from idle-sleeping during a scan or apply using macOS's built-in `caffeinate` tool. This means even if you walk away for hours, the scan keeps running. `caffeinate` is stopped automatically when the operation finishes or the app closes.
+
+### Shared monitor / Mac mini quirk
+
+**Situation:** You have a Mac mini (or any desktop) sharing one physical monitor with another computer via an input switch. When you switch the monitor input to the other machine, macOS loses the display connection. PyQt6 (the GUI framework) needs an active display to function — losing it mid-scan can stall or crash the app. This is a macOS + GUI limitation, not a bug in this app.
+
+**Workarounds:**
+
+- **Hardware fix (recommended, $8–15):** A headless HDMI or DisplayPort dummy plug tricks the Mac into thinking a monitor is always connected — even when you've switched the input elsewhere. Search "HDMI dummy plug Mac mini" on Amazon. Standard tool for Mac minis used as servers or shared machines.
+- **Software fix:** Use the **CLI** for any scan you plan to run unattended or while switching displays. The CLI has no display dependency — it keeps running in Terminal regardless of monitor state:
+  ```bash
+  uv run python -m s4converter.cli --path "/Volumes/USB/Download Samples"
+  ```
+  The cache saved by the CLI scan is shared with the GUI, so you can review and apply findings in the GUI afterwards.
+
+---
+
 ## Workflow Recommendation
 
 1. **CCC mirrors** `~/Download Samples/...` → `USB/Download Samples/...`

@@ -696,6 +696,7 @@ class MainWindow(QMainWindow):
         self.cache: Optional[ProbeCache] = None
         self.only_new: bool = True
         self._busy: bool = False
+        self._caffeinate_proc = None
         self._report_thread: Optional[QThread] = None
 
         self._build_ui()
@@ -887,12 +888,33 @@ class MainWindow(QMainWindow):
 
     def set_busy(self, busy: bool):
         self._busy = busy
+        if busy:
+            self._start_caffeinate()
+        else:
+            self._stop_caffeinate()
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if not hasattr(tab, 'scan_btn'):
                 continue
             tab.scan_btn.setEnabled(not busy)
             tab.apply_btn.setEnabled(False if busy else bool(tab.findings))
+
+    def _start_caffeinate(self):
+        import sys
+        if sys.platform != "darwin" or self._caffeinate_proc is not None:
+            return
+        try:
+            self._caffeinate_proc = subprocess.Popen(
+                ["caffeinate", "-i"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
+
+    def _stop_caffeinate(self):
+        if self._caffeinate_proc is not None:
+            self._caffeinate_proc.terminate()
+            self._caffeinate_proc = None
 
     def log(self, msg: str):
         from datetime import datetime
@@ -914,6 +936,7 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+        self._stop_caffeinate()
         if self.cache:
             self.cache.save()
             self.log("Cache saved.")
