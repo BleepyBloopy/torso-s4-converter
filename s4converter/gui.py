@@ -19,7 +19,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QLineEdit, QFileDialog, QTabWidget,
         QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
-        QProgressBar, QPlainTextEdit, QMessageBox, QStatusBar,
+        QProgressBar, QPlainTextEdit, QTextEdit, QMessageBox, QStatusBar,
         QSplitter, QInputDialog, QComboBox,
     )
 except ImportError:
@@ -252,14 +252,14 @@ class PhaseTab(QWidget):
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
 
-        self._status = QPlainTextEdit()
+        self._status = QTextEdit()
         self._status.setReadOnly(True)
         self._status.setMaximumHeight(160)
         self._status.setVisible(False)
         status_font = QFont("Menlo, Consolas, monospace")
         status_font.setPointSize(11)
         self._status.setFont(status_font)
-        self._status.setStyleSheet("background: transparent; border: none; color: #ccc;")
+        self._status.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self._status)
 
         self.table = self.build_table()
@@ -367,24 +367,30 @@ class PhaseTab(QWidget):
         self._render_status()
 
     def _render_status(self):
-        lines = []
+        import html as _html
+        def esc(s): return _html.escape(str(s))
+
+        parts = []
         for folder in self._all_top:
             if folder in self._completed_top:
-                lines.append(f"✓  {folder}")
+                parts.append(f'<div style="color:#88dd88;">✓&nbsp;&nbsp;{esc(folder)}</div>')
             elif folder == self._active_top:
-                lines.append(f"▶  {self._active_full_path}")
+                parts.append(
+                    f'<div style="color:#ffffff; font-weight:bold;">▶&nbsp;&nbsp;{esc(self._active_full_path)}</div>'
+                )
                 if self._current_file:
-                    lines.append(f"    ⟳  {self._current_file}")
+                    parts.append(
+                        f'<div style="color:#cccccc;">&nbsp;&nbsp;&nbsp;&nbsp;⟳&nbsp;&nbsp;{esc(self._current_file)}</div>'
+                    )
 
         pending = [f for f in self._all_top
                    if f not in self._completed_top and f != self._active_top]
         if pending:
-            lines.append("")
-            lines.append("── Pending " + "─" * 28)
+            parts.append('<div style="color:#555555; margin-top:4px;">── Pending ────────────────────</div>')
             for f in pending:
-                lines.append(f"   {f}")
+                parts.append(f'<div style="color:#555555;">&nbsp;&nbsp;&nbsp;{esc(f)}</div>')
 
-        self._status.setPlainText("\n".join(lines))
+        self._status.setHtml("".join(parts))
         cursor = self._status.document().find("▶")
         if not cursor.isNull():
             self._status.setTextCursor(cursor)
