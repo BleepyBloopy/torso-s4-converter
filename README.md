@@ -21,8 +21,9 @@ Key features over the original v6 script:
 brew install ffmpeg
 
 # Create a virtual environment and install Python dependencies
-python3 -m venv .venv
-CFLAGS="-Wno-incompatible-function-pointer-types" .venv/bin/pip install -r requirements.txt
+brew install uv
+uv venv .venv
+CFLAGS="-Wno-incompatible-function-pointer-types" uv pip install -r requirements.txt --python .venv/bin/python
 ```
 
 > **Note — aubio on Python 3.14:** `aubio` 0.4.9 has a C type mismatch with numpy 2.x that Python 3.14's clang rejects by default. The `CFLAGS` flag suppresses that specific warning so it compiles correctly. This only affects the BPM detection phase; all other phases work without it.
@@ -36,7 +37,7 @@ Clone or download the repo somewhere on your Mac (e.g. `~/scripts/torso-s4-conve
 ### GUI (recommended)
 
 ```bash
-.venv/bin/python -m s4converter.gui
+uv run python -m s4converter.gui
 ```
 
 1. Select your drive from the dropdown (or set a custom path) and click **Load**
@@ -51,19 +52,19 @@ Leave the **Incremental** checkbox on for fast scans. Uncheck it to force a full
 
 ```bash
 # Full interactive run
-.venv/bin/python -m s4converter.cli --path /Volumes/S-4/SAMPLES
+uv run python -m s4converter.cli --path /Volumes/S-4/SAMPLES
 
 # Run only specific phases
-.venv/bin/python -m s4converter.cli --phases 1,4
+uv run python -m s4converter.cli --phases 1,4
 
 # Phase 1 only, no prompts (for quick conversion of new drops)
-.venv/bin/python -m s4converter.cli --quick
+uv run python -m s4converter.cli --quick
 
 # Preview only, change nothing
-.venv/bin/python -m s4converter.cli --dry-run
+uv run python -m s4converter.cli --dry-run
 
 # Force full scan, ignore markers
-.venv/bin/python -m s4converter.cli --full-scan
+uv run python -m s4converter.cli --full-scan
 ```
 
 ---
