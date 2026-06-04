@@ -204,6 +204,21 @@ def _cleanup_tmp(tmp: Path):
         except OSError: pass
 
 
+def open_folder(path: Path) -> None:
+    """Open a folder in the system file manager (cross-platform)."""
+    import sys
+    if sys.platform == "darwin":
+        cmd = ["open", str(path)]
+    elif sys.platform == "win32":
+        cmd = ["explorer", str(path)]
+    else:
+        cmd = ["xdg-open", str(path)]
+    try:
+        subprocess.run(cmd, check=False)
+    except OSError:
+        pass
+
+
 def check_drive_present(base_dir: Path) -> bool:
     return base_dir.exists() and base_dir.is_dir()
 

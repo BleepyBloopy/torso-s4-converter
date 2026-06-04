@@ -16,19 +16,19 @@ Key features over the original v6 script:
 
 ## Installation
 
-```bash
-# System dependencies
-brew install ffmpeg
+Clone or download the repo, then run the setup script:
 
-# Create a virtual environment and install Python dependencies
-brew install uv
-uv venv .venv
-CFLAGS="-Wno-incompatible-function-pointer-types" uv pip install -r requirements.txt --python .venv/bin/python
+```bash
+git clone https://github.com/Collin-Li-DataScience/torso-s4-converter.git
+cd torso-s4-converter
+./setup.sh
 ```
 
-> **Note — aubio on Python 3.14:** `aubio` 0.4.9 has a C type mismatch with numpy 2.x that Python 3.14's clang rejects by default. The `CFLAGS` flag suppresses that specific warning so it compiles correctly. This only affects the BPM detection phase; all other phases work without it.
+`setup.sh` checks for and installs Homebrew dependencies (`ffmpeg`, `uv`), creates a virtual environment, and installs all Python packages. Re-running it on an existing setup is safe.
 
-Clone or download the repo somewhere on your Mac (e.g. `~/scripts/torso-s4-converter`).
+> **Requires Homebrew.** Install from [brew.sh](https://brew.sh) if you don't have it.
+
+> **aubio on Python 3.14:** The setup script passes a `CFLAGS` flag to suppress a compiler error in `aubio` 0.4.9 on Python 3.14. This is safe — it only affects the BPM detection phase.
 
 ---
 

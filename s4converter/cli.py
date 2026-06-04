@@ -10,7 +10,6 @@ Usage:
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import List
@@ -343,7 +342,7 @@ def run_report(base_dir: Path, cache: ProbeCache):
     print(f"{C.GREEN}CSV:      {csv_path}{C.END}")
     print(f"{C.GREEN}Markdown: {md_path}{C.END}")
     try:
-        subprocess.run(["open", str(base_dir)], check=False)
+        core.open_folder(base_dir)
     except OSError:
         pass
 

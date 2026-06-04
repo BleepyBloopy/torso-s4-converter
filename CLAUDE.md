@@ -9,14 +9,8 @@ A Python tool to standardize and organize audio sample libraries for the **Torso
 ## Commands
 
 ```bash
-# Install system deps
-brew install ffmpeg uv
-
-# Create venv and install Python deps
-# Note: aubio requires CFLAGS on Python 3.14 (clang treats a numpy function-pointer
-# type mismatch as an error; suppressing it is safe here)
-uv venv .venv
-CFLAGS="-Wno-incompatible-function-pointer-types" uv pip install -r requirements.txt --python .venv/bin/python
+# First-time setup (installs ffmpeg, uv, venv, and all Python deps)
+./setup.sh
 
 # Run GUI
 uv run python -m s4converter.gui

@@ -869,7 +869,7 @@ class MainWindow(QMainWindow):
         msg.addButton(QMessageBox.StandardButton.Ok)
         msg.exec()
         if msg.clickedButton() == open_btn:
-            subprocess.run(["open", str(Path(csv_path).parent)], check=False)
+            core.open_folder(Path(csv_path).parent)
 
     def _on_report_error(self, msg: str):
         self.log(f"Report error: {msg}")
