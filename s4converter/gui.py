@@ -47,19 +47,29 @@ class ScanWorker(QObject):
     progress = pyqtSignal(int, int)         # done, total
     scan_item = pyqtSignal(str)             # current file/folder being processed
     finished = pyqtSignal(list)              # List[Finding]
+    stopped = pyqtSignal()                   # scan was stopped cleanly
     error = pyqtSignal(str)
 
     def __init__(self, scan_fn, *args):
         super().__init__()
         self.scan_fn = scan_fn
         self.args = args
+        import threading
+        self.stop_event = threading.Event()
+
+    def stop(self):
+        self.stop_event.set()
 
     def run(self):
         try:
             findings = self.scan_fn(*self.args,
                                      progress_cb=self.progress.emit,
-                                     file_cb=self.scan_item.emit)
-            self.finished.emit(findings)
+                                     file_cb=self.scan_item.emit,
+                                     stop_event=self.stop_event)
+            if self.stop_event.is_set():
+                self.stopped.emit()
+            else:
+                self.finished.emit(findings)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -231,6 +241,12 @@ class PhaseTab(QWidget):
         self.count_label = QLabel("0 findings")
         toolbar.addWidget(self.count_label)
 
+        self.stop_btn = QPushButton("⏹ Stop")
+        self.stop_btn.clicked.connect(self._request_stop)
+        self.stop_btn.setVisible(False)
+        self.stop_btn.setStyleSheet("padding: 6px 12px;")
+        toolbar.addWidget(self.stop_btn)
+
         self.apply_btn = QPushButton("✓ Apply Selected")
         self.apply_btn.clicked.connect(self.start_apply)
         self.apply_btn.setEnabled(False)
@@ -286,6 +302,7 @@ class PhaseTab(QWidget):
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self._status.setVisible(True)
+        self.stop_btn.setVisible(True)
         self._render_status()
         self.main_window.log(f"[Phase {self.phase_num}] Scanning...")
 
@@ -297,8 +314,10 @@ class PhaseTab(QWidget):
         self.worker.progress.connect(self.on_progress)
         self.worker.scan_item.connect(self.on_scan_item)
         self.worker.finished.connect(self.on_scan_done)
+        self.worker.stopped.connect(self.on_scan_stopped)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
         self.worker.error.connect(self.thread.quit)
         self.thread.start()
 
@@ -316,19 +335,39 @@ class PhaseTab(QWidget):
         self.count_label.setText(f"{len(findings)} findings")
         self.progress.setVisible(False)
         self._status.setVisible(False)
+        self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         self.main_window.log(
             f"[Phase {self.phase_num}] Scan complete: {len(findings)} findings."
         )
 
+    def on_scan_stopped(self):
+        self.progress.setVisible(False)
+        self._status.setVisible(False)
+        self.stop_btn.setVisible(False)
+        self.main_window.set_busy(False)
+        if self.main_window.cache:
+            self.main_window.cache.save()
+        self.main_window.log(f"[Phase {self.phase_num}] Scan stopped. Cache saved.")
+
     def on_error(self, msg: str):
         self.progress.setVisible(False)
         self._status.setVisible(False)
+        self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         QMessageBox.critical(self, "Scan Error", msg)
         self.main_window.log(f"[Phase {self.phase_num}] ERROR: {msg}")
 
+    def _request_stop(self):
+        if hasattr(self, 'worker'):
+            self.worker.stop()
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.setText("⏹ Stopping…")
+            self.main_window.log(f"[Phase {self.phase_num}] Stop requested — finishing current batch…")
+
     def _reset_scan_status(self):
+        self.stop_btn.setText("⏹ Stop")
+        self.stop_btn.setEnabled(True)
         self._completed_top = set()
         self._active_top = ""
         self._active_full_path = ""
