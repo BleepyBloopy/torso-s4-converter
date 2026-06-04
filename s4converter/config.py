@@ -27,6 +27,17 @@ S4_ROOT          = Path(_u.get("s4_root",  "/Volumes/S-4/SAMPLES"))
 USB_ROOT         = Path(_u.get("usb_root", "/Volumes/USB"))
 DEFAULT_BASE_DIR = USB_ROOT
 
+
+def cache_root_for(path: Path) -> Path:
+    """Return the configured drive root that contains path, or path itself."""
+    for root in (USB_ROOT, S4_ROOT):
+        try:
+            path.relative_to(root)
+            return root
+        except ValueError:
+            pass
+    return path
+
 FOLDER_MARKER_NAME = ".s4_processed"
 CACHE_FILE_NAME    = ".s4_cache.json"
 LOG_FILE_NAME      = ".s4_converter.log"

@@ -374,7 +374,7 @@ def main():
         raise SystemExit(1)
 
     core.setup_logging(base_dir, verbose=args.verbose)
-    cache = ProbeCache(base_dir)
+    cache = ProbeCache(base_dir, cache_root=config.cache_root_for(base_dir))
 
     print(f"{C.BOLD}S-4 Sample Converter{C.END}")
     print(f"Target: {base_dir}")

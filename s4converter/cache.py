@@ -21,9 +21,11 @@ class ProbeCache:
     Key format: 'path|mtime|size' - any change invalidates the entry.
     """
 
-    def __init__(self, base_dir: Path):
+    def __init__(self, base_dir: Path, cache_root: Optional[Path] = None):
         self.base_dir = base_dir
-        self.cache_file = base_dir / config.CACHE_FILE_NAME
+        # Cache always lives at the configured drive root so all subfolder
+        # scans share the same probe data.
+        self.cache_file = (cache_root or base_dir) / config.CACHE_FILE_NAME
         self._data: Dict[str, Dict[str, Any]] = {}
         self._dirty = False
         self.load()

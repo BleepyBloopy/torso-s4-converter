@@ -817,16 +817,26 @@ class MainWindow(QMainWindow):
             return
 
         self.base_dir = path
-        self.cache = ProbeCache(path)
+        self.cache = ProbeCache(path, cache_root=config.cache_root_for(path))
         core.setup_logging(path, verbose=False)
+
+        # Snap dropdown to Custom if path doesn't match any preset
+        matched = any(p == str(path) for _, p in PATH_PRESETS if p is not None)
+        if not matched:
+            custom_idx = next(i for i, (_, p) in enumerate(PATH_PRESETS) if p is None)
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(custom_idx)
+            self.preset_combo.blockSignals(False)
 
         self.tabs.setEnabled(True)
         self.report_btn.setEnabled(True)
+        cache_root = self.cache.cache_file.parent
+        cache_note = f"  (cache at {cache_root})" if cache_root != path else ""
         self.statusBar().showMessage(
-            f"Loaded: {path}  |  Cache: {self.cache.size()} entries"
+            f"Loaded: {path}  |  Cache: {self.cache.size()} entries{cache_note}"
         )
         self.log(f"Loaded drive: {path}")
-        self.log(f"Cache has {self.cache.size()} entries.")
+        self.log(f"Cache: {self.cache.size()} entries — {self.cache.cache_file}")
 
     def check_base_dir(self) -> bool:
         if self.base_dir is None or not core.check_drive_present(self.base_dir):
