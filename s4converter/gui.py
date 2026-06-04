@@ -303,6 +303,7 @@ class PhaseTab(QWidget):
         self.progress.setValue(0)
         self._status.setVisible(True)
         self.stop_btn.setVisible(True)
+        self.count_label.setText("Scanning…")
         self._render_status()
         self.main_window.log(f"[Phase {self.phase_num}] Scanning...")
 
