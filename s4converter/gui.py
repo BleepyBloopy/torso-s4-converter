@@ -409,20 +409,20 @@ class PhaseTab(QWidget):
         for folder in self._all_top:
             if folder == self._active_top:
                 parts.append(
-                    f'<div style="color:#ffffff; font-weight:bold;">▶&nbsp;&nbsp;{esc(self._active_full_path)}</div>'
+                    f'<div style="color:#0d47a1; font-weight:bold;">▶&nbsp;&nbsp;{esc(self._active_full_path)}</div>'
                 )
                 if self._current_file:
                     parts.append(
-                        f'<div style="color:#cccccc;">&nbsp;&nbsp;&nbsp;&nbsp;⟳&nbsp;&nbsp;{esc(self._current_file)}</div>'
+                        f'<div style="color:#444444;">&nbsp;&nbsp;&nbsp;&nbsp;⟳&nbsp;&nbsp;{esc(self._current_file)}</div>'
                     )
             elif folder in self._seen_top:
-                parts.append(f'<div style="color:#88dd88;">✓&nbsp;&nbsp;{esc(folder)}</div>')
+                parts.append(f'<div style="color:#2e7d32;">✓&nbsp;&nbsp;{esc(folder)}</div>')
 
         pending = [f for f in self._all_top if f not in self._seen_top]
         if pending:
-            parts.append('<div style="color:#555555; margin-top:4px;">── Pending ────────────────────</div>')
+            parts.append('<div style="color:#9e9e9e; margin-top:4px;">── Pending ────────────────────</div>')
             for f in pending:
-                parts.append(f'<div style="color:#555555;">&nbsp;&nbsp;&nbsp;{esc(f)}</div>')
+                parts.append(f'<div style="color:#9e9e9e;">&nbsp;&nbsp;&nbsp;{esc(f)}</div>')
 
         self._status.setHtml("".join(parts))
         cursor = self._status.document().find("▶")
