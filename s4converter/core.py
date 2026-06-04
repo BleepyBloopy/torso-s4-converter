@@ -155,19 +155,24 @@ def ffprobe(path: Path, cache: Optional[ProbeCache] = None) -> Optional[AudioInf
 def parallel_ffprobe(paths: List[Path], cache: Optional[ProbeCache],
                      progress_cb: Optional[Callable[[int, int], None]] = None,
                      workers: int = config.PARALLEL_FFPROBE_WORKERS,
+                     chunk_size: int = config.FFPROBE_CHUNK_SIZE,
                      ) -> List[Tuple[Path, Optional[AudioInfo]]]:
+    """Run ffprobe in parallel, processing in chunks to bound memory usage."""
     results: List[Tuple[Path, Optional[AudioInfo]]] = []
+    total = len(paths)
     done = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(ffprobe, p, cache): p for p in paths}
-        for fut in as_completed(futures):
-            p = futures[fut]
-            try:    info = fut.result()
-            except: info = None
-            results.append((p, info))
-            done += 1
-            if progress_cb:
-                progress_cb(done, len(paths))
+    for chunk_start in range(0, total, chunk_size):
+        chunk = paths[chunk_start:chunk_start + chunk_size]
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(ffprobe, p, cache): p for p in chunk}
+            for fut in as_completed(futures):
+                p = futures[fut]
+                try:    info = fut.result()
+                except: info = None
+                results.append((p, info))
+                done += 1
+                if progress_cb:
+                    progress_cb(done, total)
     return results
 
 
@@ -523,12 +528,16 @@ def scan_phase_4(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     if not stereo_files:
         return findings
 
+    max_bytes = config.ANALYSIS_MAX_SIZE_MB * 1024 * 1024 if config.ANALYSIS_MAX_SIZE_MB > 0 else None
+
     for i, path in enumerate(stereo_files, 1):
         if progress_cb:
             progress_cb(i, len(stereo_files))
         try:
             stat = path.stat()
         except OSError:
+            continue
+        if max_bytes and stat.st_size > max_bytes:
             continue
         key    = f"stereo|{path}|{stat.st_mtime:.0f}|{stat.st_size}"
         cached = cache._data.get(key) if cache else None
@@ -653,11 +662,15 @@ def scan_phase_5(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     if not candidates:
         return findings
 
+    max_bytes = config.ANALYSIS_MAX_SIZE_MB * 1024 * 1024 if config.ANALYSIS_MAX_SIZE_MB > 0 else None
+
     for i, path in enumerate(candidates, 1):
         if progress_cb:
             progress_cb(i, len(candidates))
         try:    stat = path.stat()
         except: continue
+        if max_bytes and stat.st_size > max_bytes:
+            continue
         key    = f"silence|{path}|{stat.st_mtime:.0f}|{stat.st_size}"
         cached = cache._data.get(key) if cache else None
         if cached is not None:

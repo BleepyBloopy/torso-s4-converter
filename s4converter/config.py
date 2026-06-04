@@ -47,7 +47,14 @@ PREFIX_SKIP_LENGTH = 30
 
 # --- Performance ---
 FAT32_MTIME_TOLERANCE    = 2.0
-PARALLEL_FFPROBE_WORKERS = 4
+PARALLEL_FFPROBE_WORKERS = int(_u.get("ffprobe_workers", 2))
+FFPROBE_CHUNK_SIZE       = int(_u.get("ffprobe_chunk_size", 500))
+
+# --- Memory limits ---
+# Files larger than this are skipped in Phase 4 stereo analysis and Phase 5
+# silence detection (ffmpeg loads the full audio; huge files stress RAM).
+# Set to 0 to disable the limit.
+ANALYSIS_MAX_SIZE_MB = int(_u.get("analysis_max_size_mb", 200))
 
 # --- Phase 6: Stereo → Mono Detection ---
 STEREO_STRICT_THRESHOLD_DB = float(_u.get("stereo_strict_threshold_db", -90.0))
