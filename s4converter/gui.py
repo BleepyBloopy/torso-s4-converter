@@ -720,6 +720,7 @@ class MainWindow(QMainWindow):
 
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("/Volumes/S-4/SAMPLES")
+        self.path_edit.textChanged.connect(self._sync_preset_combo)
         top.addWidget(self.path_edit, stretch=1)
 
         browse_btn = QPushButton("Browse…")
@@ -798,6 +799,20 @@ class MainWindow(QMainWindow):
         else:
             self.path_edit.setText(path)
 
+    def _sync_preset_combo(self, text: str):
+        """Snap dropdown to Custom… if typed path doesn't match any preset."""
+        resolved = str(Path(text.strip()).expanduser().resolve()) if text.strip() else ""
+        for i, (_, p) in enumerate(PATH_PRESETS):
+            if p is not None and p == resolved:
+                self.preset_combo.blockSignals(True)
+                self.preset_combo.setCurrentIndex(i)
+                self.preset_combo.blockSignals(False)
+                return
+        custom_idx = next(i for i, (_, p) in enumerate(PATH_PRESETS) if p is None)
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentIndex(custom_idx)
+        self.preset_combo.blockSignals(False)
+
     def browse_dir(self):
         d = QFileDialog.getExistingDirectory(
             self, "Select SAMPLES folder",
@@ -820,14 +835,6 @@ class MainWindow(QMainWindow):
         self.base_dir = path
         self.cache = ProbeCache(path, cache_root=config.cache_root_for(path))
         core.setup_logging(path, verbose=False)
-
-        # Snap dropdown to Custom if path doesn't match any preset
-        matched = any(p == str(path) for _, p in PATH_PRESETS if p is not None)
-        if not matched:
-            custom_idx = next(i for i, (_, p) in enumerate(PATH_PRESETS) if p is None)
-            self.preset_combo.blockSignals(True)
-            self.preset_combo.setCurrentIndex(custom_idx)
-            self.preset_combo.blockSignals(False)
 
         self.tabs.setEnabled(True)
         self.report_btn.setEnabled(True)
