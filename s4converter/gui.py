@@ -30,11 +30,11 @@ except ImportError:
 from . import config, core
 from .cache import FolderMarkers, ProbeCache
 
-# Preset paths for the drive dropdown (label, path-or-None-for-custom)
+# Preset paths for the drive dropdown — sourced from config.json
 PATH_PRESETS = [
-    ("USB  –  /Volumes/S-4/SAMPLES", "/Volumes/S-4/SAMPLES"),
-    ("S-4 Root  –  /Volumes/S-4",    "/Volumes/S-4"),
-    ("Custom…",                        None),
+    (f"USB  –  {config.USB_ROOT}", str(config.USB_ROOT)),
+    (f"S-4  –  {config.S4_ROOT}",  str(config.S4_ROOT)),
+    ("Custom…",                     None),
 ]
 
 
