@@ -732,7 +732,7 @@ class MainWindow(QMainWindow):
         )
         top.addWidget(load_btn)
 
-        self.incremental_chk = QCheckBox("Incremental (skip marker-clean folders)")
+        self.incremental_chk = QCheckBox("Fast scan (skip unchanged folders)")
         self.incremental_chk.setChecked(True)
         self.incremental_chk.stateChanged.connect(
             lambda s: setattr(self, "only_new", s == Qt.CheckState.Checked.value)
