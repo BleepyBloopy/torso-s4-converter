@@ -12,11 +12,14 @@ A Python tool to standardize and organize audio sample libraries for the **Torso
 # Install system deps
 brew install ffmpeg
 
-# Install Python deps
-pip install PyQt6 aubio
+# Create venv and install Python deps
+# Note: aubio requires CFLAGS workaround on Python 3.14 (clang treats a numpy
+# function-pointer type mismatch as an error; suppressing it is safe here)
+python3 -m venv .venv
+CFLAGS="-Wno-incompatible-function-pointer-types" .venv/bin/pip install -r requirements.txt
 
 # Run GUI
-python3 -m s4converter.gui
+.venv/bin/python -m s4converter.gui
 
 # Run CLI (all phases, interactive)
 python3 -m s4converter.cli --path /Volumes/S-4/SAMPLES
