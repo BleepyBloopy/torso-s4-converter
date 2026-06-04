@@ -14,21 +14,24 @@ Key features over the original v6 script:
 
 ---
 
-## Installation
+## Installation & Launch
 
-Clone or download the repo, then run the setup script:
+Clone or download the repo, then double-click the launcher for your platform:
 
-```bash
-git clone https://github.com/Collin-Li-DataScience/torso-s4-converter.git
-cd torso-s4-converter
-./setup.sh
-```
+| Platform | File | What it does |
+|----------|------|-------------|
+| macOS | `launch.command` | Runs setup on first launch, then opens the GUI |
+| Windows | `launch.bat` | Checks dependencies, then opens the GUI |
 
-`setup.sh` checks for and installs Homebrew dependencies (`ffmpeg`, `uv`), creates a virtual environment, and installs all Python packages. Re-running it on an existing setup is safe.
+**macOS first-time note:** macOS may show a "downloaded from internet" warning the first time — right-click → Open to allow it. It won't ask again.
 
-> **Requires Homebrew.** Install from [brew.sh](https://brew.sh) if you don't have it.
+**macOS prerequisites:** [Homebrew](https://brew.sh) must be installed. `launch.command` handles everything else (`ffmpeg`, `uv`, Python packages) automatically on first run.
 
-> **aubio on Python 3.14:** The setup script passes a `CFLAGS` flag to suppress a compiler error in `aubio` 0.4.9 on Python 3.14. This is safe — it only affects the BPM detection phase.
+**Windows prerequisites:** Install [ffmpeg](https://ffmpeg.org) (`winget install ffmpeg`) and [uv](https://docs.astral.sh/uv/getting-started/installation/) manually, then run `launch.bat`.
+
+> **aubio on Python 3.14 (macOS):** `setup.sh` passes a `CFLAGS` flag to suppress a compiler error in `aubio` 0.4.9. This is safe and only affects the BPM detection build step.
+
+> **Windows + aubio:** BPM detection (Phase 6) is untested on Windows — `aubio` may need a pre-built wheel. All other phases work without it.
 
 ---
 
