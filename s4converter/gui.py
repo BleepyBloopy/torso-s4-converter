@@ -211,8 +211,8 @@ class PhaseTab(QWidget):
         self.findings: List[core.Finding] = []
         self.thread: Optional[QThread] = None
         self._all_top: List[str] = []
-        self._completed_top: set = set()
-        self._active_top: str = ""
+        self._seen_top: set = set()     # folders we've seen at least one file from
+        self._active_top: str = ""      # most recently seen top-level folder
         self._active_full_path: str = ""
         self._current_file: str = ""
 
@@ -327,9 +327,7 @@ class PhaseTab(QWidget):
             self.progress.setValue(done)
 
     def on_scan_done(self, findings: list):
-        if self._active_top:
-            self._completed_top.add(self._active_top)
-            self._active_top = ""
+        self._active_top = ""
         self.findings = findings
         self.table.set_findings(findings, self.row_builder)
         self.count_label.setText(f"{len(findings)} findings")
@@ -368,7 +366,7 @@ class PhaseTab(QWidget):
     def _reset_scan_status(self):
         self.stop_btn.setText("⏹ Stop")
         self.stop_btn.setEnabled(True)
-        self._completed_top = set()
+        self._seen_top = set()
         self._active_top = ""
         self._active_full_path = ""
         self._current_file = ""
@@ -396,11 +394,9 @@ class PhaseTab(QWidget):
         except ValueError:
             top = ""
 
-        if top and top != self._active_top:
-            if self._active_top:
-                self._completed_top.add(self._active_top)
+        if top:
+            self._seen_top.add(top)
             self._active_top = top
-
         self._active_full_path = path
         self._current_file = Path(path).name
         self._render_status()
@@ -411,9 +407,7 @@ class PhaseTab(QWidget):
 
         parts = []
         for folder in self._all_top:
-            if folder in self._completed_top:
-                parts.append(f'<div style="color:#88dd88;">✓&nbsp;&nbsp;{esc(folder)}</div>')
-            elif folder == self._active_top:
+            if folder == self._active_top:
                 parts.append(
                     f'<div style="color:#ffffff; font-weight:bold;">▶&nbsp;&nbsp;{esc(self._active_full_path)}</div>'
                 )
@@ -421,9 +415,10 @@ class PhaseTab(QWidget):
                     parts.append(
                         f'<div style="color:#cccccc;">&nbsp;&nbsp;&nbsp;&nbsp;⟳&nbsp;&nbsp;{esc(self._current_file)}</div>'
                     )
+            elif folder in self._seen_top:
+                parts.append(f'<div style="color:#88dd88;">✓&nbsp;&nbsp;{esc(folder)}</div>')
 
-        pending = [f for f in self._all_top
-                   if f not in self._completed_top and f != self._active_top]
+        pending = [f for f in self._all_top if f not in self._seen_top]
         if pending:
             parts.append('<div style="color:#555555; margin-top:4px;">── Pending ────────────────────</div>')
             for f in pending:

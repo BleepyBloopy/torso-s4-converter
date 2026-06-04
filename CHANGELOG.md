@@ -5,6 +5,8 @@
 ## [v7.1] – 2026-06-04
 
 ### Added
+- **Live scan progress panel** — visible during any scan; shows completed folders (✓ green), active folder (▶ white, full path), current file being scanned (⟳), and a dimmed Pending section for folders not yet started. Covers all 6 phases.
+- **⏹ Stop button** — appears during scanning; gracefully stops after the current batch, saves the cache, and re-enables the UI without requiring the app to close
 - **`setup.sh`** — first-time setup script for macOS/Linux; installs ffmpeg + uv via Homebrew, creates venv, installs Python deps with aubio CFLAGS workaround
 - **`launch-s4converter-MacOS.command`** — double-click launcher for macOS; runs `setup.sh` automatically on first launch
 - **`launch-s4converter-Windows.bat`** — double-click launcher for Windows; checks for ffmpeg/uv then sets up venv
