@@ -305,7 +305,7 @@ class PhaseTab(QWidget):
         self.stop_btn.setVisible(True)
         self.count_label.setText("Scanning…")
         self._render_status()
-        self.main_window.log(f"[Phase {self.phase_num}] Scanning...")
+        self.main_window.log(f"[{self.title}] Scanning...")
 
         self.thread = QThread()
         scan_fn, args = self.scan_fn()
@@ -337,7 +337,7 @@ class PhaseTab(QWidget):
         self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         self.main_window.log(
-            f"[Phase {self.phase_num}] Scan complete: {len(findings)} findings."
+            f"[{self.title}] Scan complete: {len(findings)} findings."
         )
 
     def on_scan_stopped(self):
@@ -347,7 +347,7 @@ class PhaseTab(QWidget):
         self.main_window.set_busy(False)
         if self.main_window.cache:
             self.main_window.cache.save()
-        self.main_window.log(f"[Phase {self.phase_num}] Scan stopped. Cache saved.")
+        self.main_window.log(f"[{self.title}] Scan stopped. Cache saved.")
 
     def on_error(self, msg: str):
         self.progress.setVisible(False)
@@ -355,14 +355,14 @@ class PhaseTab(QWidget):
         self.stop_btn.setVisible(False)
         self.main_window.set_busy(False)
         QMessageBox.critical(self, "Scan Error", msg)
-        self.main_window.log(f"[Phase {self.phase_num}] ERROR: {msg}")
+        self.main_window.log(f"[{self.title}] ERROR: {msg}")
 
     def _request_stop(self):
         if hasattr(self, 'worker'):
             self.worker.stop()
             self.stop_btn.setEnabled(False)
             self.stop_btn.setText("⏹ Stopping…")
-            self.main_window.log(f"[Phase {self.phase_num}] Stop requested — finishing current batch…")
+            self.main_window.log(f"[{self.title}] Stop requested — finishing current batch…")
 
     def _reset_scan_status(self):
         self.stop_btn.setText("⏹ Stop")
@@ -450,7 +450,7 @@ class PhaseTab(QWidget):
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self.main_window.log(
-            f"[Phase {self.phase_num}] Applying to {len(selected)} files..."
+            f"[{self.title}] Applying to {len(selected)} items..."
         )
 
         extra = self.get_apply_extra(selected)
@@ -470,12 +470,12 @@ class PhaseTab(QWidget):
         return {}
 
     def _show_help(self):
-        QMessageBox.information(self, f"Phase {self.phase_num} – {self.title}", self._help_text)
+        QMessageBox.information(self, self.title, self._help_text)
 
     def on_apply_done(self, ok: int, fail: int):
         self.progress.setVisible(False)
         self.main_window.log(
-            f"[Phase {self.phase_num}] Done: {ok} succeeded, {fail} failed."
+            f"[{self.title}] Done: {ok} succeeded, {fail} failed."
         )
         QMessageBox.information(self, "Complete", f"{ok} succeeded, {fail} failed.")
         self.start_scan()
@@ -521,229 +521,174 @@ class Phase1Tab(PhaseTab):
 
 
 # ============================================================================
-# Phase 2 — Prefix Removal (folder-by-folder picker)
+# Names tab — Prefix Removal (Phase 2) + Long Filename Cleanup (Phase 3)
 # ============================================================================
 
-class Phase2Tab(PhaseTab):
+class NamesTab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
-            main_window, 2, "Prefix Removal",
-            "Scan all subfolders for shared filename prefixes. "
-            "Edit the 'Detected Prefix' column before applying.",
+            main_window, 2, "Name Cleanup",
+            "Strip shared prefixes and shorten long filenames. "
+            "Edit values inline before applying.",
             help_text=(
-                "Scans every subfolder under the base directory for shared filename "
-                "prefixes. Example — a folder containing:\n"
-                "  KickDrum_Tight.wav, KickDrum_Open.wav, KickDrum_Hard.wav …\n"
-                "→ the prefix \"KickDrum_\" is identified and stripped from all of them.\n\n"
-                "Detection thresholds (config.json):\n"
-                "  • Minimum prefix length: 8 characters\n"
-                "  • Minimum group size: 3 files must share the prefix\n"
-                "  • Short-name skip: folders where all names are ≤ 30 chars are ignored\n\n"
-                "You can edit the detected prefix in the table before applying."
+                "Combines two name-related cleanup passes:\n\n"
+                "Prefix Removal — scans every subfolder for shared filename prefixes.\n"
+                "  Example: KickDrum_Tight.wav, KickDrum_Open.wav → Tight.wav, Open.wav\n"
+                f"  (min prefix: {config.MIN_PREFIX_LENGTH} chars, min group: {config.MIN_GROUP_SIZE} files)\n\n"
+                f"Long Filenames — finds files with stems > {config.NAME_LENGTH_LIMIT} chars.\n"
+                "  Suggested shorter names are auto-generated.\n\n"
+                "Edit the 'Edit' column before applying — it acts as the prefix to strip "
+                "for Prefix rows, and the new filename for Long Name rows.\n\n"
+                "Tip: run prefix removal first — stripping a prefix often brings names "
+                "under the length limit automatically."
             ),
         )
 
     def build_table(self):
         return FindingsTable(
-            ["Folder", "Detected Prefix (editable)", "Files", "Example Rename"],
-            editable_col=2,
+            ["Type", "File / Folder", "Detail", "Edit (editable)"],
+            editable_col=4,
         )
 
     def row_builder(self, f):
-        affected = f.extra.get("affected_files", [])
-        prefix   = f.extra.get("prefix", "")
-        example  = ""
-        if affected:
-            ex = Path(affected[0]).name
-            if ex.startswith(prefix):
-                example = f"{ex} → {ex[len(prefix):]}"
-        try:
-            rel = str(f.path.relative_to(self.main_window.base_dir))
-        except ValueError:
-            rel = str(f.path)
-        return [rel, prefix, len(affected), example]
+        if f.phase == 2:
+            prefix   = f.extra.get("prefix", "")
+            affected = len(f.extra.get("affected_files", []))
+            try:    loc = str(f.path.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path)
+            return ["Prefix", loc, f"{affected} files", prefix]
+        else:
+            suggestions = f.extra.get("suggestions", [])
+            suggested   = suggestions[0] if suggestions else ""
+            try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path.parent)
+            return ["Long Name", f.current, f.reason, suggested]
 
     def scan_fn(self):
-        return (core.scan_phase_2_all,
-                (self.main_window.base_dir, self.main_window.only_new))
+        base     = self.main_window.base_dir
+        only_new = self.main_window.only_new
+        def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
+            findings = core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event)
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_phase_3(base_dir, only_new, progress_cb, file_cb, stop_event)
+            return findings
+        return (combined, (base, only_new))
 
-    def get_apply_extra(self, selected):
-        prefixes = {}
-        for f in selected:
-            edited = self.table.get_edit_value(f)
-            if edited:
-                prefixes[id(f)] = edited
-        return {"prefixes": prefixes}
+    def start_apply(self):
+        selected = self.table.get_selected_findings()
+        if not selected:
+            QMessageBox.information(self, "Nothing Selected", "No items are checked.")
+            return
+        reply = QMessageBox.question(
+            self, "Confirm",
+            f"Apply changes to {len(selected)} items?\n\nThis is not reversible.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        edit_map = {id(f): self.table.get_edit_value(f) for f in selected}
+
+        def apply_fn(finding):
+            edited = edit_map.get(id(finding), "")
+            if finding.phase == 2:
+                return bool(core.apply_phase_2(finding, override_prefix=edited or None))
+            return core.apply_phase_3(finding, edited)
+
+        self.main_window.set_busy(True)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self.main_window.log(f"[{self.title}] Applying to {len(selected)} items...")
+        self.thread = QThread()
+        self.worker = ApplyWorker(apply_fn, selected)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.on_progress)
+        self.worker.finished.connect(self.on_apply_done)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.thread.start()
 
     def apply_fn(self):
-        return core.apply_phase_2
+        pass  # overridden by start_apply
 
 
 # ============================================================================
-# Phase 3 — Long Filename Cleanup
+# File Size tab — Stereo → Mono (Phase 4) + Silence Removal (Phase 5)
 # ============================================================================
 
-class Phase3Tab(PhaseTab):
+class FileSizeTab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
-            main_window, 3, "Long Filenames",
-            f"Find files with stems > {config.NAME_LENGTH_LIMIT} chars. "
-            "Edit the 'New Name' column to rename.",
+            main_window, 4, "File Size",
+            "Convert fake-stereo files to mono and trim leading/trailing silence.",
             help_text=(
-                f"Finds WAV files whose stem (name without extension) is longer than "
-                f"{config.NAME_LENGTH_LIMIT} characters. While FAT32 allows 255-char "
-                f"names, the S-4 display truncates long names.\n\n"
-                f"Rules applied:\n"
-                f"  • Limit: {config.NAME_LENGTH_LIMIT} characters for the stem\n"
-                f"  • Suggested shorter names are auto-generated (truncated + cleaned)\n"
-                f"  • Edit the \"New Name\" column before applying\n\n"
-                f"Tip: Run Phase 2 (prefix removal) first — stripping a shared prefix "
-                f"often brings names under the limit automatically."
-            ),
-        )
-
-    def build_table(self):
-        return FindingsTable(
-            ["Current Name", "Length", "New Name (editable)", "Folder"],
-            editable_col=3,
-        )
-
-    def row_builder(self, f):
-        suggestions = f.extra.get("suggestions", [])
-        suggested   = suggestions[0] if suggestions else ""
-        try:
-            rel = str(f.path.parent.relative_to(self.main_window.base_dir))
-        except ValueError:
-            rel = str(f.path.parent)
-        return [f.current, f.reason, suggested, rel]
-
-    def scan_fn(self):
-        return (core.scan_phase_3,
-                (self.main_window.base_dir, self.main_window.only_new))
-
-    def get_apply_extra(self, selected):
-        new_names = {}
-        for f in selected:
-            edited = self.table.get_edit_value(f)
-            if edited:
-                new_names[id(f)] = edited
-        return {"new_names": new_names}
-
-    def apply_fn(self):
-        return core.apply_phase_3
-
-
-# ============================================================================
-# Phase 4 — Stereo → Mono Detection
-# ============================================================================
-
-class Phase4Tab(PhaseTab):
-    """Phase 4 — Stereo → Mono. Adds a Loose mode checkbox."""
-
-    def __init__(self, main_window):
-        super().__init__(
-            main_window, 4, "Stereo → Mono",
-            "Detect 'fake stereo' files where L and R are identical. "
-            "Saves ~50 % per file. True stereo is never touched.",
-            help_text=(
-                "Analyses stereo WAV files to detect \"fake stereo\" — files where "
-                "both channels carry identical (or nearly identical) audio. "
-                "Converting these to true mono saves ~50 % file size.\n\n"
-                "Detection thresholds (config.json):\n"
-                "  • Dual mono   (auto-selected): max |L−R| ≤ −90 dBFS\n"
-                "      Channels are bit-perfect or essentially identical.\n"
-                "  • One-sided   (auto-selected): one channel ≥ 40 dB quieter\n"
-                "      The quiet side is silence; only the loud side is kept.\n"
-                "  • Near-mono   (Loose mode, opt-in): max |L−R| ≤ −60 dBFS\n"
-                "      Very faint stereo width — shown unchecked for manual review.\n"
-                "  • True stereo: above all thresholds — skipped entirely.\n\n"
-                "Enable \"Loose mode\" to also surface near-mono files."
+                "Combines two file-size reduction passes:\n\n"
+                "Stereo → Mono — detects 'fake stereo' where L and R are identical.\n"
+                "  • Dual mono (auto-selected): L−R diff ≤ −90 dBFS\n"
+                "  • One-sided (auto-selected): one channel ≥ 40 dB quieter\n"
+                "  • Near-mono (Loose mode, opt-in): diff ≤ −60 dBFS\n"
+                "  Saves ~50 % per converted file.\n\n"
+                "Silence Removal — trims leading/trailing silence.\n"
+                f"  Threshold: {config.SILENCE_THRESHOLD_DB} dBFS, "
+                f"min duration: {config.SILENCE_MIN_DURATION}s\n\n"
+                "Enable Loose mode to also surface near-mono files."
             ),
         )
         self.include_near_mono = False
-
-        loose_chk = QCheckBox("Loose mode (include near-mono, opt-in)")
+        loose_chk = QCheckBox("Loose mode (include near-mono)")
         loose_chk.setToolTip(
             "Also flag files with very small (≤ -60 dB) L/R differences. "
-            "Listed but UNCHECKED by default — review carefully."
+            "Listed but UNCHECKED — review carefully."
         )
-        loose_chk.stateChanged.connect(self._on_loose_changed)
+        loose_chk.stateChanged.connect(
+            lambda s: setattr(self, "include_near_mono", s == Qt.CheckState.Checked.value)
+        )
         toolbar = self.layout().itemAt(1).layout()
         toolbar.insertWidget(3, loose_chk)
 
-    def _on_loose_changed(self, state):
-        self.include_near_mono = (state == Qt.CheckState.Checked.value)
-
     def build_table(self):
-        return FindingsTable(["File", "Classification", "Current", "Target", "Savings"])
+        return FindingsTable(["Type", "File", "Issue", "Current", "Target", "Savings"])
 
     def row_builder(self, f):
-        cls = f.extra.get("classification", "?")
-        cls_pretty = {
-            "dual_mono": "Dual mono (identical L/R)",
-            "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
-            "near_mono": "Near-mono (faint stereo)",
-        }.get(cls, cls)
-        return [f.path.name, cls_pretty, f.current, f.target,
-                core.format_bytes(f.savings_bytes)]
-
-    def scan_fn(self):
-        return (core.scan_phase_4,
-                (self.main_window.base_dir, self.main_window.cache,
-                 self.main_window.only_new, self.include_near_mono))
-
-    def apply_fn(self):
-        return core.apply_phase_4
-
-
-# ============================================================================
-# Phase 5 — Silence Removal
-# ============================================================================
-
-class Phase5Tab(PhaseTab):
-    def __init__(self, main_window):
-        super().__init__(
-            main_window, 5, "Silence Removal",
-            "Find WAVs with leading/trailing silence and trim it off.",
-            help_text=(
-                "Scans WAV files for silence at the start and/or end and trims it. "
-                "Particularly useful for stems and one-shots that have dead air "
-                "before the transient or a long tail after the sound ends.\n\n"
-                "Detection thresholds (config.json):\n"
-                f"  • Noise floor: {config.SILENCE_THRESHOLD_DB} dBFS "
-                "(below this = silence)\n"
-                f"  • Minimum duration: {config.SILENCE_MIN_DURATION}s "
-                "(shorter gaps are ignored)\n\n"
-                "The filter is applied with ffmpeg's silenceremove. "
-                "The areverse trick is used to detect trailing silence accurately.\n\n"
-                "Tip: Run this after Phase 1 so all files are already at "
-                "48 kHz / 16-bit before trimming."
-            ),
-        )
-
-    def build_table(self):
-        return FindingsTable(
-            ["File", "Lead Silence", "Trail Silence", "Duration", "Est. Savings"]
-        )
-
-    def row_builder(self, f):
+        if f.phase == 4:
+            cls = f.extra.get("classification", "?")
+            cls_pretty = {
+                "dual_mono": "Dual mono",
+                "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
+                "near_mono": "Near-mono",
+            }.get(cls, cls)
+            return ["Stereo→Mono", f.path.name, cls_pretty,
+                    f.current, f.target, core.format_bytes(f.savings_bytes)]
         lead  = f.extra.get("lead",  0.0)
         trail = f.extra.get("trail", 0.0)
-        return [
-            f.path.name,
-            f"{lead:.2f}s"  if lead  >= config.SILENCE_MIN_DURATION else "—",
-            f"{trail:.2f}s" if trail >= config.SILENCE_MIN_DURATION else "—",
-            f.current,
-            core.format_bytes(f.savings_bytes),
-        ]
+        issue = (f"{lead:.2f}s lead" if lead  >= config.SILENCE_MIN_DURATION else "") + \
+                (" / " if lead >= config.SILENCE_MIN_DURATION and trail >= config.SILENCE_MIN_DURATION else "") + \
+                (f"{trail:.2f}s trail" if trail >= config.SILENCE_MIN_DURATION else "")
+        return ["Silence", f.path.name, issue,
+                f.current, f.target, core.format_bytes(f.savings_bytes)]
 
     def scan_fn(self):
-        return (core.scan_phase_5,
-                (self.main_window.base_dir, self.main_window.cache,
-                 self.main_window.only_new))
+        base     = self.main_window.base_dir
+        cache    = self.main_window.cache
+        only_new = self.main_window.only_new
+        include_near_mono = self.include_near_mono
+        def combined(base_dir, cache, only_new, progress_cb=None, file_cb=None, stop_event=None):
+            findings = core.scan_phase_4(base_dir, cache, only_new, include_near_mono,
+                                          progress_cb, file_cb, stop_event)
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_phase_5(base_dir, cache, only_new,
+                                               progress_cb, file_cb, stop_event)
+            return findings
+        return (combined, (base, cache, only_new))
 
     def apply_fn(self):
-        return core.apply_phase_5
+        def dispatch(finding):
+            if finding.phase == 4:
+                return core.apply_phase_4(finding)
+            return core.apply_phase_5(finding)
+        return dispatch
 
 
 # ============================================================================
@@ -888,11 +833,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(Phase1Tab(self), "1. Format")
-        self.tabs.addTab(Phase2Tab(self), "2. Prefixes")
-        self.tabs.addTab(Phase3Tab(self), "3. Long Names")
-        self.tabs.addTab(Phase4Tab(self), "4. Stereo→Mono")
-        self.tabs.addTab(Phase5Tab(self), "5. Silence")
-        self.tabs.addTab(Phase6Tab(self), "6. BPM")
+        self.tabs.addTab(NamesTab(self),  "2. Names")
+        self.tabs.addTab(FileSizeTab(self), "3. File Size")
+        self.tabs.addTab(Phase6Tab(self), "4. BPM")
         self.tabs.setEnabled(False)
         splitter.addWidget(self.tabs)
 

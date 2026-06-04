@@ -47,7 +47,7 @@ uv run python -m s4converter.gui
 2. Click into a phase tab and click **Scan**
 3. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
 4. Review findings in the table; uncheck anything you don't want to change
-5. For Phase 2 (prefixes), Phase 3 (long names), and Phase 6 (BPM), edit values inline if needed
+5. For Phase 2 (names) and Phase 4 (BPM), edit values inline if needed
 6. Click **Apply Selected**
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
@@ -78,31 +78,28 @@ uv run python -m s4converter.cli --full-scan
 ### Phase 1 — Format Normalization
 Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC) and WAV files at the wrong sample rate or bit depth, and converts everything to **48 kHz / 16-bit WAV** in a single pass. Originals are deleted on success (configurable via `delete_original` in `config.json`).
 
-### Phase 2 — Prefix Removal
-Scans every subfolder for shared filename prefixes and offers to strip them.
+### Phase 2 — Name Cleanup *(Prefix Removal + Long Filenames)*
+Two passes in one tab:
+
+**Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
 Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.
-You can edit the detected prefix inline in the GUI before applying.
 
-### Phase 3 — Long Filename Cleanup
-Finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives. Edit the suggested name inline before applying.
+**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives.
 
-### Phase 4 — Stereo → Mono Detection
-Detects "fake stereo" files where left and right channels are identical (or nearly so) and converts them to mono, saving ~50% file size.
+Edit the value inline for each row — it acts as the prefix to strip for Prefix rows, and the new name for Long Name rows. Running prefix removal first often brings long names under the limit automatically.
 
-**Detection is mathematical, not heuristic.** For each stereo file:
-- Computes peak level of `L`, `R`, and `L - R`
-- Classifies as:
-  - `dual_mono` (diff peak ≤ −90 dB) — selected by default
-  - `one_side` (one channel > 40 dB louder) — selected by default
-  - `near_mono` (diff between −90 and −60 dB) — shown only in **loose mode**, unchecked by default
-  - `true_stereo` (diff > −60 dB) — never flagged
+### Phase 3 — File Size *(Stereo → Mono + Silence Removal)*
+Two passes in one tab:
 
-**Typical wins:** kick/snare/hat one-shots, bass shots, and 808s are usually dual mono. Field recordings, pads, FX risers, and stems are usually true stereo and won't be flagged.
+**Stereo → Mono** — detects "fake stereo" files and converts them to mono, saving ~50% file size.
+- `dual_mono` (diff ≤ −90 dB) — selected by default
+- `one_side` (one channel > 40 dB louder) — selected by default
+- `near_mono` (diff ≤ −60 dB) — **Loose mode** only, unchecked by default
+- `true_stereo` — never flagged
 
-### Phase 5 — Silence Removal
-Detects and trims leading and trailing silence from WAV files. Threshold and minimum duration are configurable in `config.json`.
+**Silence Removal** — trims leading and trailing silence. Threshold and minimum duration configurable in `config.json`.
 
-### Phase 6 — BPM Detection
+### Phase 4 — BPM Detection
 Detects BPM for rhythmic loops using `aubio` and offers to rename files with a `{bpm}_` prefix (e.g. `120_my_loop.wav`). Having BPM in the filename enables proper sync-mode loading in DISC.
 
 Multiple filters prevent false positives on one-shots and recordings:
@@ -211,9 +208,8 @@ The GUI automatically prevents your Mac from idle-sleeping during a scan or appl
 1. **CCC mirrors** `~/Download Samples/...` → `USB/Download Samples/...`
 2. After CCC sync, run **Phase 1 (`--quick`)** to convert any new non-WAV files — done in seconds for incremental
 3. Run the **GUI** for occasional cleanups:
-   - Phase 2 to strip pack prefixes
-   - Phase 3 to shorten long names
-   - Phase 4 to halve file size on fake-stereo files
-   - Phase 6 to tag loops with BPM for proper S-4 sync mode
+   - Phase 2 (Names) to strip pack prefixes and shorten long filenames
+   - Phase 3 (File Size) to halve file size on fake-stereo files and trim silence
+   - Phase 4 (BPM) to tag loops with BPM for proper S-4 sync mode
 
 The converter operates in-place, so your Mac source folder stays untouched as your archive.

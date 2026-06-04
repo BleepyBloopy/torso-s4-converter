@@ -42,16 +42,16 @@ s4converter/
 
 **Dependency direction:** `config.py` ← `cache.py` ← `core.py` ← `cli.py` / `gui.py`. The core is fully decoupled from both UIs.
 
-## The six phases (authoritative — README is stale)
+## The four tabs / phases
 
-| # | Name | What it does |
-|---|------|-------------|
-| 1 | Format Normalization | Converts non-WAV audio + wrong-SR/bit-depth WAVs → 48 kHz 16-bit WAV in one pass |
-| 2 | Prefix Removal | Detects and strips shared filename prefixes within a folder |
-| 3 | Long Filenames | Flags stems > `NAME_LENGTH_LIMIT` chars, suggests shorter names |
-| 4 | Stereo → Mono | Detects dual-mono / one-sided / near-mono files via L, R, and L-R peak analysis |
-| 5 | Silence Removal | Trims leading/trailing silence using `silencedetect` + `silenceremove` |
-| 6 | BPM Detection | Detects BPM via `aubio`, offers to rename with `{bpm}_` prefix (opt-in, unselected by default) |
+| Tab | Name | What it does |
+|-----|------|-------------|
+| 1 | Format | Converts non-WAV audio + wrong-SR/bit-depth WAVs → 48 kHz 16-bit WAV in one pass |
+| 2 | Names | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) combined |
+| 3 | File Size | Stereo → Mono (scan_phase_4) + Silence removal (scan_phase_5) combined |
+| 4 | BPM | BPM detection via `aubio`, renames with `{bpm}_` prefix (high-confidence auto-selected) |
+
+Internal phase numbers (used in `Finding.phase` and core functions) are still 1–6; only the GUI tabs are consolidated.
 
 ## Core patterns
 
