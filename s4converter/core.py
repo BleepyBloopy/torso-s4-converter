@@ -258,6 +258,12 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     if not candidates:
         return findings
 
+    # Skip files already confirmed clean by a previous scan or apply.
+    if cache is not None:
+        candidates = [p for p in candidates if not cache.is_phase_done(p, 1)]
+    if not candidates:
+        return findings
+
     results   = parallel_ffprobe(candidates, cache, progress_cb, file_cb=file_cb, stop_event=stop_event)
     target_sr = int(config.FORCE_AR)
 
@@ -281,6 +287,9 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
             wrong_sr   = info.sample_rate != target_sr
             wrong_bits = info.bits != 16
             if not wrong_sr and not wrong_bits:
+                # Already correct format — mark so we skip it next time.
+                if cache is not None:
+                    cache.mark_phase_done(path, 1)
                 continue
             parts = []
             if wrong_sr:   parts.append(f"{info.sample_rate} Hz → 48000 Hz")
@@ -294,6 +303,22 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
             ))
 
     return findings
+
+
+def get_apply_output_path(finding: Finding) -> Optional[Path]:
+    """Return the path of the output file after a successful apply_phase_N.
+
+    Used by ApplyWorker to mark the output as phase-done in the cache.
+    Returns None for rename-only phases (2, 3, 6) where the output path
+    depends on user-edited values not available here.
+    """
+    if finding.phase == 1:
+        if finding.extra.get("type") == "non_wav":
+            return finding.path.with_suffix(".wav")
+        return finding.path  # converted in-place
+    if finding.phase in (4, 5):
+        return finding.path  # converted in-place
+    return None  # phases 2, 3, 6 are renames — path changes
 
 
 def apply_phase_1(finding: Finding) -> bool:

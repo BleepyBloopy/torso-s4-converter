@@ -2,6 +2,14 @@
 
 ---
 
+## [v7.3] – 2026-06-05
+
+### Changed
+- **No auto-rescan after Apply** — the automatic re-scan that triggered after every Apply is removed; rescan manually when needed
+- **Per-file "done" flags in cache** — after Apply converts a file, a `done|phase|path|mtime|size` flag is written to the cache. On the next scan, files with a valid done flag are skipped entirely (no ffprobe). Files that were already correct format during a scan also get flagged. This makes re-scans O(new files) instead of O(total files) for the workflow of repeatedly adding samples to an existing library.
+
+---
+
 ## [v7.2] – 2026-06-04
 
 ### Fixed

@@ -50,6 +50,26 @@ class ProbeCache:
         self._data[key] = probe_data
         self._dirty = True
 
+    def mark_phase_done(self, path: Path, phase: int) -> None:
+        """Record that this file was successfully processed by phase N.
+
+        Keyed by path+mtime+size so the flag auto-invalidates if the file
+        is later replaced or modified externally.
+        """
+        key = self._key(path)
+        if key is None:
+            return
+        self._data[f"done|{phase}|{key}"] = True
+        self._dirty = True
+
+    def is_phase_done(self, path: Path, phase: int) -> bool:
+        """Return True if this file was previously processed by phase N
+        and has not changed since (same mtime+size)."""
+        key = self._key(path)
+        if key is None:
+            return False
+        return bool(self._data.get(f"done|{phase}|{key}"))
+
     def load(self) -> None:
         if self.cache_file.exists():
             try:

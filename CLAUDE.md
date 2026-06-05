@@ -67,6 +67,8 @@ Internal phase numbers (used in `Finding.phase` and core functions) are still 1â
 
 **Subprocess encoding:** All `subprocess.run` calls in `core.py` use `encoding="utf-8", errors="replace"` (never bare `text=True`) so that ffprobe/ffmpeg output containing non-ASCII filenames does not raise `UnicodeDecodeError`.
 
+**Per-file "done" flags:** `ProbeCache` exposes `mark_phase_done(path, phase)` and `is_phase_done(path, phase)`. Keys are `done|N|path|mtime|size` â€” auto-invalidated if the file changes. `scan_phase_1` pre-filters candidates against this flag and marks passing files done. `ApplyWorker` marks each successfully converted file done via `core.get_apply_output_path(finding)`. This makes re-scans O(new files) after the first full scan+apply pass.
+
 **`FolderMarkers`:** After a successful apply, a `.s4_processed` hidden file is touched in each folder. Incremental scans (`only_new=True`) skip folders where no file is newer than the marker. Any rename/conversion calls `FolderMarkers.invalidate(folder)` to force re-scan of that folder next time.
 
 **Parallelism:** `parallel_ffprobe()` uses `ThreadPoolExecutor` (default 4 workers) only for probing. All actual conversions are single-threaded and sequential.

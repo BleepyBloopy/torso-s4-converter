@@ -82,11 +82,12 @@ class ApplyWorker(QObject):
     stopped = pyqtSignal(int, int)            # ok, fail — stopped early
     error = pyqtSignal(str)
 
-    def __init__(self, apply_fn, findings, extra_args=None):
+    def __init__(self, apply_fn, findings, extra_args=None, cache=None):
         super().__init__()
         self.apply_fn = apply_fn
         self.findings = findings
         self.extra_args = extra_args or {}
+        self.cache = cache
         import threading
         self.stop_event = threading.Event()
 
@@ -96,9 +97,11 @@ class ApplyWorker(QObject):
     def run(self):
         ok = fail = 0
         total = len(self.findings)
+        touched_folders: set = set()
         try:
             for i, f in enumerate(self.findings, 1):
                 if self.stop_event.is_set():
+                    self._finalize(touched_folders)
                     self.stopped.emit(ok, fail)
                     return
                 self.current_file.emit(Path(f.path).name)
@@ -111,12 +114,22 @@ class ApplyWorker(QObject):
                     result = self.apply_fn(f)
                 if result:
                     ok += 1
+                    touched_folders.add(Path(f.path).parent)
+                    if self.cache is not None:
+                        out = core.get_apply_output_path(f)
+                        if out is not None and out.exists():
+                            self.cache.mark_phase_done(out, f.phase)
                 else:
                     fail += 1
                 self.progress.emit(i, total)
+            self._finalize(touched_folders)
             self.finished.emit(ok, fail)
         except Exception as e:
             self.error.emit(str(e))
+
+    def _finalize(self, touched_folders: set) -> None:
+        if self.cache is not None and touched_folders:
+            self.cache.save()
 
 
 class ReportWorker(QObject):
@@ -520,7 +533,8 @@ class PhaseTab(QWidget):
         extra = self.get_apply_extra(selected)
 
         self.thread = QThread()
-        self.worker = ApplyWorker(self.apply_fn(), selected, extra)
+        self.worker = ApplyWorker(self.apply_fn(), selected, extra,
+                                  cache=self.main_window.cache)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
@@ -558,7 +572,6 @@ class PhaseTab(QWidget):
             f"[{self.title}] Done: {ok} succeeded, {fail} failed."
         )
         QMessageBox.information(self, "Complete", f"{ok} succeeded, {fail} failed.")
-        self.start_scan()
 
     def on_apply_stopped(self, ok: int, fail: int):
         self._hide_apply_ui()
@@ -694,7 +707,7 @@ class NamesTab(PhaseTab):
         self.count_label.setText(f"0 / {len(selected):,} files")
         self.main_window.log(f"[{self.title}] Applying to {len(selected)} items...")
         self.thread = QThread()
-        self.worker = ApplyWorker(apply_fn, selected)
+        self.worker = ApplyWorker(apply_fn, selected, cache=self.main_window.cache)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
