@@ -34,7 +34,7 @@ Clone or download the repo, then double-click the launcher for your platform:
 
 > **aubio on Python 3.14 (macOS):** `setup.sh` passes a `CFLAGS` flag to suppress a compiler error in `aubio` 0.4.9. This is safe and only affects the BPM detection build step.
 
-> **Windows + aubio:** BPM detection (Phase 6) is untested on Windows — `aubio` may need a pre-built wheel. All other phases work without it.
+> **Windows + aubio:** BPM detection (Phase 4 / BPM tab) is untested on Windows — `aubio` may need a pre-built wheel. All other phases work without it.
 
 ---
 
@@ -50,7 +50,7 @@ uv run python -m s4converter.gui
 2. Click into a phase tab and click **Scan**
 3. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
 4. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
-5. For Phase 2 (names) and Phase 4 (BPM), edit values inline if needed
+5. For the **Names** tab (Phase 2) and **BPM** tab (Phase 4), edit values inline if needed
 6. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
@@ -61,7 +61,7 @@ Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full r
 # Full interactive run
 uv run python -m s4converter.cli --path /Volumes/S-4/SAMPLES
 
-# Run only specific phases
+# Run only specific phases (CLI uses internal phase numbers 1–6)
 uv run python -m s4converter.cli --phases 1,4
 
 # Phase 1 only, no prompts (for quick conversion of new drops)
@@ -142,9 +142,9 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 | `s4_root` | `/Volumes/S-4/SAMPLES` | Path to the S-4's internal storage |
 | `usb_root` | `/Volumes/USB` | Path to your external USB drive |
 | `delete_original` | `true` | Delete source file after non-WAV conversion |
-| `name_length_limit` | `70` | Max filename stem length (Phase 3) |
-| `stereo_strict_threshold_db` | `-90.0` | dual_mono threshold (Phase 4) |
-| `stereo_loose_threshold_db` | `-60.0` | near_mono threshold (Phase 4) |
+| `name_length_limit` | `70` | Max filename stem length (Phase 2 / Names tab) |
+| `stereo_strict_threshold_db` | `-90.0` | dual_mono threshold (Phase 3 / File Size tab) |
+| `stereo_loose_threshold_db` | `-60.0` | near_mono threshold (Phase 3 / File Size tab) |
 | `bpm_min_confidence` | `0.4` | Minimum confidence to report a BPM result |
 | `bpm_skip_folder_hints` | (list) | Folder name substrings that skip BPM detection |
 
@@ -156,8 +156,8 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 |---------|-------|---------|-------|
 | GUI | ✅ | ✅ | ✅ |
 | CLI | ✅ | ✅ | ✅ |
-| Phase 1–5 | ✅ | ✅ | ✅ |
-| Phase 6 (BPM) | ✅ | ⚠️ untested | ✅ |
+| Phases 1–3 | ✅ | ✅ | ✅ |
+| Phase 4 (BPM) | ✅ | ⚠️ untested | ✅ |
 | One-click launcher | ✅ `launch-s4converter-MacOS.command` | ✅ `launch-s4converter-Windows.bat` | run `./setup.sh` then `uv run python -m s4converter.gui` |
 | Auto-setup | ✅ via Homebrew | manual (winget) | manual (apt/pacman) |
 
