@@ -79,6 +79,7 @@ class ApplyWorker(QObject):
     progress = pyqtSignal(int, int)
     current_file = pyqtSignal(str)            # filename being processed right now
     finished = pyqtSignal(int, int)          # ok, fail
+    stopped = pyqtSignal(int, int)            # ok, fail — stopped early
     error = pyqtSignal(str)
 
     def __init__(self, apply_fn, findings, extra_args=None):
@@ -86,12 +87,20 @@ class ApplyWorker(QObject):
         self.apply_fn = apply_fn
         self.findings = findings
         self.extra_args = extra_args or {}
+        import threading
+        self.stop_event = threading.Event()
+
+    def stop(self):
+        self.stop_event.set()
 
     def run(self):
         ok = fail = 0
         total = len(self.findings)
         try:
             for i, f in enumerate(self.findings, 1):
+                if self.stop_event.is_set():
+                    self.stopped.emit(ok, fail)
+                    return
                 self.current_file.emit(Path(f.path).name)
                 if self.extra_args.get("new_names"):
                     result = self.apply_fn(f, self.extra_args["new_names"].get(id(f), ""))
@@ -406,7 +415,8 @@ class PhaseTab(QWidget):
             self.worker.stop()
             self.stop_btn.setEnabled(False)
             self.stop_btn.setText("⏹ Stopping…")
-            self.main_window.log(f"[{self.title}] Stop requested — finishing current batch…")
+            action = "apply" if self._applying else "scan"
+            self.main_window.log(f"[{self.title}] Stop requested — finishing current file…" if self._applying else f"[{self.title}] Stop requested — finishing current batch…")
 
     def _reset_scan_status(self):
         self.stop_btn.setText("⏹ Stop")
@@ -501,6 +511,7 @@ class PhaseTab(QWidget):
         self.progress.setValue(0)
         self._current_file_label.setText("")
         self._current_file_label.setVisible(True)
+        self.stop_btn.setVisible(True)
         self.count_label.setText(f"0 / {len(selected):,} files")
         self.main_window.log(
             f"[{self.title}] Applying to {len(selected)} items..."
@@ -515,8 +526,10 @@ class PhaseTab(QWidget):
         self.worker.progress.connect(self.on_progress)
         self.worker.current_file.connect(self._on_apply_file)
         self.worker.finished.connect(self.on_apply_done)
+        self.worker.stopped.connect(self.on_apply_stopped)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
         self.worker.error.connect(self.thread.quit)
         self.thread.start()
 
@@ -526,19 +539,34 @@ class PhaseTab(QWidget):
     def _on_apply_file(self, filename: str):
         self._current_file_label.setText(f"⟳  {filename}")
 
-    def _show_help(self):
-        QMessageBox.information(self, self.title, self._help_text)
-
-    def on_apply_done(self, ok: int, fail: int):
+    def _hide_apply_ui(self):
         self._applying = False
         self.progress.setVisible(False)
         self._current_file_label.setVisible(False)
         self._current_file_label.setText("")
+        self.stop_btn.setVisible(False)
+        self.stop_btn.setText("⏹ Stop")
+        self.stop_btn.setEnabled(True)
+        self.main_window.set_busy(False)
+
+    def _show_help(self):
+        QMessageBox.information(self, self.title, self._help_text)
+
+    def on_apply_done(self, ok: int, fail: int):
+        self._hide_apply_ui()
         self.main_window.log(
             f"[{self.title}] Done: {ok} succeeded, {fail} failed."
         )
         QMessageBox.information(self, "Complete", f"{ok} succeeded, {fail} failed.")
         self.start_scan()
+
+    def on_apply_stopped(self, ok: int, fail: int):
+        self._hide_apply_ui()
+        if self.main_window.cache:
+            self.main_window.cache.save()
+        self.main_window.log(
+            f"[{self.title}] Apply stopped. {ok} succeeded, {fail} failed. Cache saved."
+        )
 
 
 # ============================================================================
@@ -662,6 +690,7 @@ class NamesTab(PhaseTab):
         self.progress.setValue(0)
         self._current_file_label.setText("")
         self._current_file_label.setVisible(True)
+        self.stop_btn.setVisible(True)
         self.count_label.setText(f"0 / {len(selected):,} files")
         self.main_window.log(f"[{self.title}] Applying to {len(selected)} items...")
         self.thread = QThread()
@@ -671,8 +700,10 @@ class NamesTab(PhaseTab):
         self.worker.progress.connect(self.on_progress)
         self.worker.current_file.connect(self._on_apply_file)
         self.worker.finished.connect(self.on_apply_done)
+        self.worker.stopped.connect(self.on_apply_stopped)
         self.worker.error.connect(self.on_error)
         self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
         self.worker.error.connect(self.thread.quit)
         self.thread.start()
 

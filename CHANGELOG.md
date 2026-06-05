@@ -11,6 +11,7 @@
 
 ### Added
 - **Apply progress feedback** — progress bar now shows an accurate `X / Y files` count label and a `⟳ filename` line while Apply is running, matching the scan feedback style
+- **⏹ Stop button during Apply** — same stop button used during scanning now also appears during Apply; stops cleanly after the current file completes, saves the cache, and logs how many files succeeded/failed
 
 ---
 
