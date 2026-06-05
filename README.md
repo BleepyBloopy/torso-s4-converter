@@ -6,11 +6,14 @@ Key features over the original v6 script:
 
 - **Persistent ffprobe cache** — only probes new/changed files (150× faster re-scans)
 - **Per-folder markers** — skips entire folders that haven't changed since last run
+- **Per-file done flags** — files confirmed clean or already converted are skipped on every subsequent scan; re-scans after adding new samples are O(new files), not O(total library)
 - **Parallel ffprobe** — uses multiple workers during the initial scan
 - **GUI** — review findings in a table, check/uncheck per file, edit names inline
 - **Busy lock** — all buttons gray out while a scan or apply is running; warns before quit
 - **Dry-run mode** — preview every change before touching anything (CLI only)
 - **Atomic writes** — converter never leaves half-finished files
+
+Tested against libraries of ~300 GB / 30 000+ samples nested across a handful of top-level subfolders on a USB drive.
 
 ---
 
