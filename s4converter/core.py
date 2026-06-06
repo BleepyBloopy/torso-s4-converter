@@ -399,6 +399,7 @@ def scan_phase_2(folder: Path) -> Optional[Finding]:
 
 
 def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
+                   replacement_prefix: Optional[str] = None,
                    log_cb: Optional[callable] = None) -> int:
     prefix = override_prefix if override_prefix is not None else finding.extra.get("prefix", "")
     if not prefix:
@@ -439,6 +440,8 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
                 log_cb(f"  skip (prefix mismatch): {p.name!r} does not start with {prefix!r}")
             continue
         new_name = p.name[len(prefix):]
+        if replacement_prefix:
+            new_name = replacement_prefix + new_name
         if not new_name or new_name == p.suffix:
             if log_cb:
                 log_cb(f"  skip (empty result): {p.name!r} → {new_name!r}")
@@ -455,7 +458,7 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
             if log_cb:
                 log_cb(f"  skip (rename error): {p.name} → {new_name}: {e}")
     if count:
-        FolderMarkers.invalidate(folder)
+        FolderMarkers.mark_folder(folder)
     return count
 
 

@@ -160,10 +160,20 @@ _TABLE_DISPLAY_CAP = 5000
 class FindingsTable(QTableWidget):
     """Table that displays findings with a checkbox per row."""
 
-    def __init__(self, columns: List[str], editable_col: Optional[int] = None):
+    def __init__(self, columns: List[str], editable_col: Optional[int] = None,
+                 editable_cols: Optional[List[int]] = None):
         super().__init__()
         self.columns = ["✓"] + columns
-        self.editable_col = editable_col  # column index in the full table (0 = checkbox)
+        # Support either a single editable_col or a list of editable_cols.
+        if editable_cols is not None:
+            self._editable_cols: set = set(editable_cols)
+            self.editable_col = editable_cols[0] if editable_cols else None
+        elif editable_col is not None:
+            self._editable_cols = {editable_col}
+            self.editable_col = editable_col
+        else:
+            self._editable_cols = set()
+            self.editable_col = None
         self.findings: List[core.Finding] = []  # full list, may exceed display cap
 
         self.setColumnCount(len(self.columns))
@@ -174,7 +184,7 @@ class FindingsTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.setEditTriggers(
             QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.SelectedClicked
-            if editable_col is not None else QTableWidget.EditTrigger.NoEditTriggers
+            if self._editable_cols else QTableWidget.EditTrigger.NoEditTriggers
         )
 
     def set_findings(self, findings: List[core.Finding], row_builder):
@@ -194,11 +204,14 @@ class FindingsTable(QTableWidget):
 
             for col, value in enumerate(row_builder(f), start=1):
                 item = QTableWidgetItem(str(value))
-                if self.editable_col is None or col != self.editable_col:
+                if col not in self._editable_cols:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.setItem(row, col, item)
 
         self.setUpdatesEnabled(True)
+        if display:
+            for col in range(self.columnCount() - 1):
+                self.resizeColumnToContents(col)
 
     def get_selected_findings(self) -> List[core.Finding]:
         selected = []
@@ -219,11 +232,14 @@ class FindingsTable(QTableWidget):
     def get_edit_value(self, finding: core.Finding) -> str:
         if self.editable_col is None:
             return ""
+        return self.get_col_value(finding, self.editable_col)
+
+    def get_col_value(self, finding: core.Finding, col: int) -> str:
         try:
             row = self.findings.index(finding)
             if row >= _TABLE_DISPLAY_CAP:
                 return ""
-            return self.item(row, self.editable_col).text()
+            return self.item(row, col).text()
         except (ValueError, AttributeError):
             return ""
 
@@ -639,10 +655,10 @@ class NamesTab(PhaseTab):
                 f"Long Filenames — finds files with stems > {config.NAME_LENGTH_LIMIT} chars.\n"
                 "  Suggested shorter names are auto-generated.\n\n"
                 "Prefix rows have two columns:\n"
-                "  • Detected Prefix — the shared prefix the scan found (read-only)\n"
-                "  • Override — leave empty to strip the detected prefix; type a custom "
-                "string to strip that instead (the folder is re-read live)\n\n"
-                "Long Name rows: edit the Override column to set the new filename.\n\n"
+                "  • Detected Prefix — the shared prefix the scan found; double-click to edit\n"
+                "  • New prefix (opt.) — if non-empty, prepended to each file after stripping\n"
+                "    e.g. type 'Caribou140-' to rename 'Prefix_Kick.wav' → 'Caribou140-Kick.wav'\n\n"
+                "Long Name rows: edit the New prefix column to set the new filename.\n\n"
                 "Tip: run prefix removal first — stripping a prefix often brings names "
                 "under the length limit automatically."
             ),
@@ -650,8 +666,8 @@ class NamesTab(PhaseTab):
 
     def build_table(self):
         return FindingsTable(
-            ["Type", "File / Folder", "Detail", "Detected Prefix", "Override (optional)"],
-            editable_col=5,
+            ["Type", "File / Folder", "Detail", "Detected Prefix", "New prefix (opt.)"],
+            editable_cols=[4, 5],
         )
 
     def row_builder(self, f):
@@ -693,22 +709,27 @@ class NamesTab(PhaseTab):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        edit_map = {id(f): self.table.get_edit_value(f) for f in selected}
+        # Col 4 = Detected Prefix (editable), col 5 = New prefix (opt.).
+        # Phase 2: strip col 4; if col 5 non-empty, prepend it to each renamed file.
+        # Phase 3 (long names): col 5 is the new filename.
+        detected_map = {id(f): self.table.get_col_value(f, 4) for f in selected}
+        override_map  = {id(f): self.table.get_col_value(f, 5) for f in selected}
 
         log = self.main_window.log
 
         def apply_fn(finding):
-            edited = edit_map.get(id(finding), "").strip()
+            override = override_map.get(id(finding), "").strip()
+            detected = detected_map.get(id(finding), "").strip()
             if finding.phase == 2:
-                # Empty override → strip the detected prefix (default).
-                # Non-empty override → use it as a custom prefix (re-reads folder live).
+                # Strip the (possibly user-edited) detected prefix; optionally prepend override.
                 result = core.apply_phase_2(
                     finding,
-                    override_prefix=edited if edited else None,
+                    override_prefix=detected or None,
+                    replacement_prefix=override or None,
                     log_cb=lambda msg: log(f"[{self.title}] {msg}"),
                 )
                 return bool(result)
-            return core.apply_phase_3(finding, edited)
+            return core.apply_phase_3(finding, override)
 
         self.main_window.set_busy(True)
         self._applying = True
