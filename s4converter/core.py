@@ -398,28 +398,64 @@ def scan_phase_2(folder: Path) -> Optional[Finding]:
     )
 
 
-def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None) -> int:
-    prefix   = override_prefix if override_prefix is not None else finding.extra.get("prefix", "")
+def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
+                   log_cb: Optional[callable] = None) -> int:
+    prefix = override_prefix if override_prefix is not None else finding.extra.get("prefix", "")
     if not prefix:
+        if log_cb:
+            log_cb("apply_phase_2: no prefix — nothing to strip")
         return 0
+
+    # When a custom prefix is in play, re-read the folder live so stale
+    # affected_files paths (from scan time) don't cause mismatches.
+    folder = finding.path
+    if override_prefix is not None:
+        try:
+            candidates = [
+                p for p in folder.iterdir()
+                if p.is_file() and not is_hidden_or_appledouble(p)
+                and p.name.startswith(prefix)
+            ]
+        except OSError as e:
+            if log_cb:
+                log_cb(f"apply_phase_2: cannot read folder: {e}")
+            return 0
+    else:
+        candidates = [Path(s) for s in finding.extra.get("affected_files", [])]
+
+    if not candidates:
+        if log_cb:
+            log_cb(f"apply_phase_2: no files found starting with {prefix!r}")
+        return 0
+
     count = 0
-    for path_str in finding.extra.get("affected_files", []):
-        p = Path(path_str)
-        if not p.exists() or not p.name.startswith(prefix):
+    for p in candidates:
+        if not p.exists():
+            if log_cb:
+                log_cb(f"  skip (not found): {p.name}")
+            continue
+        if not p.name.startswith(prefix):
+            if log_cb:
+                log_cb(f"  skip (prefix mismatch): {p.name!r} does not start with {prefix!r}")
             continue
         new_name = p.name[len(prefix):]
         if not new_name or new_name == p.suffix:
+            if log_cb:
+                log_cb(f"  skip (empty result): {p.name!r} → {new_name!r}")
             continue
         new_path = p.with_name(new_name)
         if new_path.exists():
+            if log_cb:
+                log_cb(f"  skip (target exists): {new_name}")
             continue
         try:
             p.rename(new_path)
             count += 1
-        except OSError:
-            pass
+        except OSError as e:
+            if log_cb:
+                log_cb(f"  skip (rename error): {p.name} → {new_name}: {e}")
     if count:
-        FolderMarkers.invalidate(finding.path)
+        FolderMarkers.invalidate(folder)
     return count
 
 

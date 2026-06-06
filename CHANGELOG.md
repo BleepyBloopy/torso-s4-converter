@@ -2,6 +2,17 @@
 
 ---
 
+## [v7.4] – 2026-06-06
+
+### Changed
+- **Names tab — Prefix rows now show two columns**: "Detected Prefix" (read-only, what the scan found) and "Override (optional)" (editable, empty by default). Leaving Override empty strips the full detected prefix. Typing a custom value (e.g. `Caribou140bpm`) re-reads the folder live and strips that prefix instead — no stale-path mismatches.
+- `apply_phase_2` now re-reads the folder live when a custom override prefix is provided, instead of relying on the `affected_files` list captured at scan time
+
+### Fixed
+- `apply_phase_2` failure when the Override column was edited to a value that didn't match the original `affected_files` paths; added per-file skip logging to surface the reason in the log pane
+
+---
+
 ## [v7.3] – 2026-06-05
 
 ### Changed

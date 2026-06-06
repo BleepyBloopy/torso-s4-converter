@@ -638,8 +638,11 @@ class NamesTab(PhaseTab):
                 f"  (min prefix: {config.MIN_PREFIX_LENGTH} chars, min group: {config.MIN_GROUP_SIZE} files)\n\n"
                 f"Long Filenames — finds files with stems > {config.NAME_LENGTH_LIMIT} chars.\n"
                 "  Suggested shorter names are auto-generated.\n\n"
-                "Edit the 'Edit' column before applying — it acts as the prefix to strip "
-                "for Prefix rows, and the new filename for Long Name rows.\n\n"
+                "Prefix rows have two columns:\n"
+                "  • Detected Prefix — the shared prefix the scan found (read-only)\n"
+                "  • Override — leave empty to strip the detected prefix; type a custom "
+                "string to strip that instead (the folder is re-read live)\n\n"
+                "Long Name rows: edit the Override column to set the new filename.\n\n"
                 "Tip: run prefix removal first — stripping a prefix often brings names "
                 "under the length limit automatically."
             ),
@@ -647,8 +650,8 @@ class NamesTab(PhaseTab):
 
     def build_table(self):
         return FindingsTable(
-            ["Type", "File / Folder", "Detail", "Edit (editable)"],
-            editable_col=4,
+            ["Type", "File / Folder", "Detail", "Detected Prefix", "Override (optional)"],
+            editable_col=5,
         )
 
     def row_builder(self, f):
@@ -657,13 +660,15 @@ class NamesTab(PhaseTab):
             affected = len(f.extra.get("affected_files", []))
             try:    loc = str(f.path.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path)
-            return ["Prefix", loc, f"{affected} files", prefix]
+            # Detected Prefix: read-only, shows what was found.
+            # Override: empty by default (strip the detected prefix); user can type a custom one.
+            return ["Prefix", loc, f"{affected} files", prefix, ""]
         else:
             suggestions = f.extra.get("suggestions", [])
             suggested   = suggestions[0] if suggestions else ""
             try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path.parent)
-            return ["Long Name", f.current, f.reason, suggested]
+            return ["Long Name", f.current, f.reason, "", suggested]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
@@ -690,10 +695,19 @@ class NamesTab(PhaseTab):
 
         edit_map = {id(f): self.table.get_edit_value(f) for f in selected}
 
+        log = self.main_window.log
+
         def apply_fn(finding):
-            edited = edit_map.get(id(finding), "")
+            edited = edit_map.get(id(finding), "").strip()
             if finding.phase == 2:
-                return bool(core.apply_phase_2(finding, override_prefix=edited or None))
+                # Empty override → strip the detected prefix (default).
+                # Non-empty override → use it as a custom prefix (re-reads folder live).
+                result = core.apply_phase_2(
+                    finding,
+                    override_prefix=edited if edited else None,
+                    log_cb=lambda msg: log(f"[{self.title}] {msg}"),
+                )
+                return bool(result)
             return core.apply_phase_3(finding, edited)
 
         self.main_window.set_busy(True)
