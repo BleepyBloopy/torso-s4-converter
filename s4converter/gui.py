@@ -210,8 +210,13 @@ class FindingsTable(QTableWidget):
 
         self.setUpdatesEnabled(True)
         if display:
+            # Cap each column at 35% of viewport width so long paths can't push
+            # other columns off screen. Last column is always left to stretch.
+            max_w = max(120, int(self.viewport().width() * 0.35))
             for col in range(self.columnCount() - 1):
                 self.resizeColumnToContents(col)
+                if self.columnWidth(col) > max_w:
+                    self.setColumnWidth(col, max_w)
 
     def get_selected_findings(self) -> List[core.Finding]:
         selected = []
@@ -689,8 +694,9 @@ class NamesTab(PhaseTab):
     def scan_fn(self):
         base     = self.main_window.base_dir
         only_new = self.main_window.only_new
+        cache    = self.main_window.cache
         def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
-            findings = core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event)
+            findings = core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event, cache=cache)
             if not (stop_event and stop_event.is_set()):
                 findings += core.scan_phase_3(base_dir, only_new, progress_cb, file_cb, stop_event)
             return findings
@@ -715,7 +721,8 @@ class NamesTab(PhaseTab):
         detected_map = {id(f): self.table.get_col_value(f, 4) for f in selected}
         override_map  = {id(f): self.table.get_col_value(f, 5) for f in selected}
 
-        log = self.main_window.log
+        log   = self.main_window.log
+        cache = self.main_window.cache
 
         def apply_fn(finding):
             override = override_map.get(id(finding), "").strip()
@@ -726,6 +733,7 @@ class NamesTab(PhaseTab):
                     finding,
                     override_prefix=detected or None,
                     replacement_prefix=override or None,
+                    cache=cache,
                     log_cb=lambda msg: log(f"[{self.title}] {msg}"),
                 )
                 return bool(result)

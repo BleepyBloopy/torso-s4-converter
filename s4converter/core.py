@@ -370,13 +370,14 @@ def detect_common_prefix(filenames: List[str]) -> str:
     return p if len(p) >= config.MIN_PREFIX_LENGTH else ""
 
 
-def scan_phase_2(folder: Path) -> Optional[Finding]:
+def scan_phase_2(folder: Path, cache: Optional[ProbeCache] = None) -> Optional[Finding]:
     if not folder.is_dir():
         return None
     try:
         files = [f for f in folder.iterdir()
                  if f.is_file() and not is_hidden_or_appledouble(f)
-                 and f.name != config.FOLDER_MARKER_NAME]
+                 and f.name != config.FOLDER_MARKER_NAME
+                 and not (cache and cache.is_phase_done(f, 2))]
     except OSError:
         return None
     if len(files) < config.MIN_GROUP_SIZE:
@@ -400,6 +401,7 @@ def scan_phase_2(folder: Path) -> Optional[Finding]:
 
 def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
                    replacement_prefix: Optional[str] = None,
+                   cache: Optional[ProbeCache] = None,
                    log_cb: Optional[callable] = None) -> int:
     prefix = override_prefix if override_prefix is not None else finding.extra.get("prefix", "")
     if not prefix:
@@ -453,12 +455,14 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
             continue
         try:
             p.rename(new_path)
+            if cache:
+                cache.mark_phase_done(new_path, 2)
             count += 1
         except OSError as e:
             if log_cb:
                 log_cb(f"  skip (rename error): {p.name} → {new_name}: {e}")
     if count:
-        FolderMarkers.mark_folder(folder)
+        FolderMarkers.invalidate(folder)
     return count
 
 
@@ -466,6 +470,7 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
                      progress_cb: Optional[Callable[[int, int], None]] = None,
                      file_cb: Optional[Callable[[str], None]] = None,
                      stop_event=None,
+                     cache: Optional[ProbeCache] = None,
                      ) -> List[Finding]:
     """Scan every subfolder under base_dir for shared filename prefixes."""
     folders: List[Path] = []
@@ -485,7 +490,7 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
             progress_cb(i, len(folders))
         if file_cb:
             file_cb(str(folder))
-        finding = scan_phase_2(folder)
+        finding = scan_phase_2(folder, cache=cache)
         if finding:
             findings.append(finding)
     return findings
