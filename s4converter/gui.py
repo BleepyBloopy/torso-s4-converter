@@ -995,6 +995,13 @@ class MainWindow(QMainWindow):
         self.report_btn.clicked.connect(self.export_report)
         top.addWidget(self.report_btn)
 
+        self.eject_btn = QPushButton("⏏ Eject")
+        self.eject_btn.setEnabled(False)
+        self.eject_btn.setToolTip("Save cache and safely eject the loaded drive")
+        self.eject_btn.clicked.connect(self.eject_drive)
+        self.eject_btn.setStyleSheet("padding: 4px 10px;")
+        top.addWidget(self.eject_btn)
+
         layout.addLayout(top)
 
         # --- Splitter: tabs on top, log on bottom ---
@@ -1082,6 +1089,7 @@ class MainWindow(QMainWindow):
 
         self.tabs.setEnabled(True)
         self.report_btn.setEnabled(True)
+        self.eject_btn.setEnabled(True)
         cache_root = self.cache.cache_file.parent
         cache_note = f"  (cache at {cache_root})" if cache_root != path else ""
         self.statusBar().showMessage(
@@ -1136,6 +1144,74 @@ class MainWindow(QMainWindow):
     def _on_report_error(self, msg: str):
         self.log(f"Report error: {msg}")
         QMessageBox.critical(self, "Report Error", msg)
+
+    # --- Eject ---
+
+    def eject_drive(self):
+        if self._busy:
+            QMessageBox.warning(self, "Busy",
+                                "A scan or apply is still running. Stop it before ejecting.")
+            return
+        if self.base_dir is None:
+            return
+
+        # Find the mount point (top of /Volumes/X, not a subfolder)
+        import sys
+        parts = self.base_dir.parts
+        if sys.platform == "darwin" and len(parts) >= 3 and parts[1] == "Volumes":
+            mount = Path("/") / parts[1] / parts[2]
+        else:
+            mount = self.base_dir
+
+        reply = QMessageBox.question(
+            self, "Eject Drive",
+            f"Save cache and eject  {mount} ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Save cache before releasing handle
+        if self.cache is not None:
+            self.cache.save()
+            self.log("Cache saved.")
+
+        # Release all Python references to the volume
+        self.base_dir = None
+        self.cache = None
+        self.tabs.setEnabled(False)
+        self.report_btn.setEnabled(False)
+        self.eject_btn.setEnabled(False)
+        self.statusBar().showMessage("Ejecting…")
+
+        # Move cwd off the volume so Python doesn't hold it open
+        import os
+        try:
+            os.chdir(Path.home())
+        except OSError:
+            pass
+
+        # Run diskutil eject
+        try:
+            res = subprocess.run(
+                ["diskutil", "eject", str(mount)],
+                capture_output=True, encoding="utf-8", errors="replace", timeout=15,
+            )
+            if res.returncode == 0:
+                self.log(f"Ejected: {mount}")
+                self.statusBar().showMessage(f"Ejected {mount.name} — safe to unplug.")
+                QMessageBox.information(self, "Ejected",
+                                        f"{mount.name} ejected successfully.\nSafe to unplug.")
+            else:
+                err = (res.stderr or res.stdout or "unknown error").strip()
+                self.log(f"Eject failed: {err}")
+                self.statusBar().showMessage("Eject failed — see log.")
+                QMessageBox.warning(self, "Eject Failed",
+                                    f"diskutil eject returned an error:\n\n{err}")
+        except (subprocess.TimeoutExpired, OSError) as e:
+            self.log(f"Eject error: {e}")
+            self.statusBar().showMessage("Eject failed — see log.")
+            QMessageBox.warning(self, "Eject Failed", str(e))
 
     def set_busy(self, busy: bool):
         self._busy = busy
