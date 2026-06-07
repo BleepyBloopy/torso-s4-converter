@@ -741,7 +741,8 @@ def detect_silence_bounds(path: Path,
 
     noise = f"{config.SILENCE_THRESHOLD_DB}dB"
     dur   = str(config.SILENCE_MIN_DURATION)
-    cmd   = ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path),
+    # silencedetect logs at INFO level — needs -v info to appear in stderr
+    cmd   = ["ffmpeg", "-v", "info", "-nostdin", "-i", str(path),
               "-af", f"silencedetect=noise={noise}:duration={dur}",
               "-f", "null", "-"]
     try:
