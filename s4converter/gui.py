@@ -928,6 +928,181 @@ class Phase6Tab(PhaseTab):
 
 
 # ============================================================================
+# Size Check tab — folder size overview (read-only)
+# ============================================================================
+
+class _NumericItem(QTableWidgetItem):
+    """Table item that sorts by numeric UserRole value, not display text."""
+    def __lt__(self, other):
+        a = self.data(Qt.ItemDataRole.UserRole)
+        b = other.data(Qt.ItemDataRole.UserRole)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return a < b
+        return super().__lt__(other)
+
+
+class _FolderSizeWorker(QObject):
+    row_ready = pyqtSignal(str, int, int)   # rel_path, total_bytes, file_count
+    finished  = pyqtSignal()
+    stopped   = pyqtSignal()
+
+    def __init__(self, base_dir: Path):
+        super().__init__()
+        self._base = base_dir
+        import threading
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        try:
+            # Direct children only (non-hidden dirs)
+            children = sorted(
+                [d for d in self._base.iterdir()
+                 if d.is_dir() and not d.name.startswith(".")],
+                key=lambda d: d.name.lower(),
+            )
+            for child in children:
+                if self._stop.is_set():
+                    self.stopped.emit()
+                    return
+                total = 0
+                count = 0
+                for root, dirs, files in os.walk(child):
+                    dirs[:] = [d for d in dirs if not d.startswith(".")]
+                    for fname in files:
+                        if fname.startswith("."):
+                            continue
+                        try:
+                            total += os.path.getsize(os.path.join(root, fname))
+                            count += 1
+                        except OSError:
+                            pass
+                try:
+                    rel = str(child.relative_to(self._base))
+                except ValueError:
+                    rel = child.name
+                self.row_ready.emit(rel, total, count)
+            self.finished.emit()
+        except Exception:
+            self.finished.emit()
+
+
+class SizeCheckTab(QWidget):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self._thread: Optional[QThread] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        self._desc = QLabel("Total size of each subfolder. Scans from the drive root (/Volumes/X), not just the loaded subfolder.")
+        self._desc.setWordWrap(True)
+        self._desc.setStyleSheet("color: #888; padding: 4px;")
+        layout.addWidget(self._desc)
+
+        toolbar = QHBoxLayout()
+        self._scan_btn = QPushButton("🔍 Scan")
+        self._scan_btn.clicked.connect(self._start_scan)
+        toolbar.addWidget(self._scan_btn)
+
+        self._stop_btn = QPushButton("⏹ Stop")
+        self._stop_btn.setVisible(False)
+        self._stop_btn.clicked.connect(self._request_stop)
+        toolbar.addWidget(self._stop_btn)
+
+        toolbar.addStretch()
+        self._count_label = QLabel("")
+        toolbar.addWidget(self._count_label)
+        layout.addLayout(toolbar)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)   # indeterminate
+        self._progress.setVisible(False)
+        layout.addWidget(self._progress)
+
+        self._table = QTableWidget()
+        self._table.setColumnCount(3)
+        self._table.setHorizontalHeaderLabels(["Folder", "Total Size", "Files"])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSortingEnabled(True)
+        layout.addWidget(self._table)
+
+    @staticmethod
+    def _mount_root(path: Path) -> Path:
+        """Return /Volumes/X from any path beneath it, else the path itself."""
+        import sys
+        parts = path.parts
+        if sys.platform == "darwin" and len(parts) >= 3 and parts[1] == "Volumes":
+            return Path("/") / parts[1] / parts[2]
+        return path
+
+    def _start_scan(self):
+        if not self.main_window.check_base_dir():
+            return
+        scan_root = self._mount_root(self.main_window.base_dir)
+        self._desc.setText(f"Scanning from: {scan_root}")
+        self._table.setRowCount(0)
+        self._table.setSortingEnabled(False)
+        self._count_label.setText("Scanning…")
+        self._scan_btn.setEnabled(False)
+        self._stop_btn.setVisible(True)
+        self._progress.setVisible(True)
+
+        self._thread = QThread()
+        self._worker = _FolderSizeWorker(scan_root)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.row_ready.connect(self._on_row)
+        self._worker.finished.connect(self._on_done)
+        self._worker.stopped.connect(self._on_done)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.stopped.connect(self._thread.quit)
+        self._thread.start()
+
+    def _on_row(self, rel_path: str, total_bytes: int, file_count: int):
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        self._table.setItem(row, 0, QTableWidgetItem(rel_path))
+
+        # Use DisplayRole for the human-readable string, UserRole for numeric sort
+        size_item = _NumericItem(core.format_bytes(total_bytes))
+        size_item.setData(Qt.ItemDataRole.UserRole, total_bytes)
+        size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._table.setItem(row, 1, size_item)
+
+        count_item = _NumericItem(f"{file_count:,}")
+        count_item.setData(Qt.ItemDataRole.UserRole, file_count)
+        count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._table.setItem(row, 2, count_item)
+
+        self._count_label.setText(f"{row + 1} folders")
+
+    def _on_done(self):
+        self._table.setSortingEnabled(True)
+        # Default sort: largest first
+        self._table.sortItems(1, Qt.SortOrder.DescendingOrder)
+        self._scan_btn.setEnabled(True)
+        self._stop_btn.setVisible(False)
+        self._progress.setVisible(False)
+        n = self._table.rowCount()
+        self._count_label.setText(f"{n} folders")
+
+    def _request_stop(self):
+        if hasattr(self, '_worker'):
+            self._worker.stop()
+            self._stop_btn.setEnabled(False)
+
+
+# ============================================================================
 # Main window
 # ============================================================================
 
@@ -1013,6 +1188,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(StereoMonoTab(self),"3. Stereo to Mono")
         self.tabs.addTab(Phase6Tab(self),    "4. BPM")
         self.tabs.addTab(NamesTab(self),     "5. Name")
+        self.tabs.addTab(SizeCheckTab(self), "6. Size Check")
         self.tabs.setEnabled(False)
         splitter.addWidget(self.tabs)
 
@@ -1175,6 +1351,19 @@ class MainWindow(QMainWindow):
         if self.cache is not None:
             self.cache.save()
             self.log("Cache saved.")
+
+        # Stop any running Size Check scan on the volume
+        size_tab = self.tabs.widget(5)
+        if isinstance(size_tab, SizeCheckTab) and hasattr(size_tab, '_worker'):
+            size_tab._worker.stop()
+
+        # Close logging FileHandlers pointing to the volume — keeps Python off the disk
+        import logging as _logging
+        root_logger = _logging.getLogger()
+        for h in list(root_logger.handlers):
+            if isinstance(h, _logging.FileHandler):
+                h.close()
+                root_logger.removeHandler(h)
 
         # Release all Python references to the volume
         self.base_dir = None
