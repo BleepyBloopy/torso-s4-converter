@@ -42,16 +42,17 @@ s4converter/
 
 **Dependency direction:** `config.py` ← `cache.py` ← `core.py` ← `cli.py` / `gui.py`. The core is fully decoupled from both UIs.
 
-## The four tabs / phases
+## The five tabs / phases
 
 | Tab | Name | What it does |
 |-----|------|-------------|
-| 1 | Format | Converts non-WAV audio + wrong-SR/bit-depth WAVs → 48 kHz 16-bit WAV in one pass |
-| 2 | Names | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) combined |
-| 3 | File Size | Stereo → Mono (scan_phase_4) + Silence removal (scan_phase_5) combined |
+| 1 | Wav Format | Converts non-WAV audio + wrong-SR/bit-depth WAVs → 48 kHz 16-bit WAV in one pass |
+| 2 | Silence Remover | Trims leading/trailing silence (scan_phase_5 / apply_phase_5) |
+| 3 | Stereo to Mono | Converts fake-stereo to mono (scan_phase_4 / apply_phase_4); has Loose mode checkbox |
 | 4 | BPM | BPM detection via `aubio`, renames with `{bpm}_` prefix (high-confidence auto-selected) |
+| 5 | Name | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) combined |
 
-Internal phase numbers (used in `Finding.phase` and core functions) are still 1–6; only the GUI tabs are consolidated.
+Internal phase numbers (used in `Finding.phase` and core functions) are still 1–6.
 
 ## Core patterns
 

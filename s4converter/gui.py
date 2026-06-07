@@ -610,7 +610,7 @@ class PhaseTab(QWidget):
 class Phase1Tab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
-            main_window, 1, "Format Normalization",
+            main_window, 1, "Wav Format",
             "Convert non-WAV files and fix WAVs at wrong sample rate or bit depth "
             "→ 16-bit 48 kHz WAV in one pass.",
             help_text=(
@@ -771,22 +771,54 @@ class NamesTab(PhaseTab):
 # File Size tab — Stereo → Mono (Phase 4) + Silence Removal (Phase 5)
 # ============================================================================
 
-class FileSizeTab(PhaseTab):
+class SilenceTab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
-            main_window, 4, "File Size",
-            "Convert fake-stereo files to mono and trim leading/trailing silence.",
+            main_window, 5, "Silence Remover",
+            "Trim leading and trailing silence from samples.",
             help_text=(
-                "Combines two file-size reduction passes:\n\n"
-                "Stereo → Mono — detects 'fake stereo' where L and R are identical.\n"
+                "Detects and removes leading/trailing silence from WAV files.\n\n"
+                f"Silence threshold: {config.SILENCE_THRESHOLD_DB} dBFS\n"
+                f"Minimum silence duration: {config.SILENCE_MIN_DURATION}s\n\n"
+                "Both thresholds are configurable in config.json.\n\n"
+                "The file is rewritten in place using ffmpeg; "
+                "the original is not kept."
+            ),
+        )
+
+    def build_table(self):
+        return FindingsTable(["File", "Lead silence", "Trail silence", "Current", "Target", "Savings"])
+
+    def row_builder(self, f):
+        lead  = f.extra.get("lead",  0.0)
+        trail = f.extra.get("trail", 0.0)
+        lead_s  = f"{lead:.2f}s"  if lead  >= config.SILENCE_MIN_DURATION else "—"
+        trail_s = f"{trail:.2f}s" if trail >= config.SILENCE_MIN_DURATION else "—"
+        return [f.path.name, lead_s, trail_s,
+                f.current, f.target, core.format_bytes(f.savings_bytes)]
+
+    def scan_fn(self):
+        base     = self.main_window.base_dir
+        cache    = self.main_window.cache
+        only_new = self.main_window.only_new
+        return (core.scan_phase_5, (base, cache, only_new))
+
+    def apply_fn(self):
+        return core.apply_phase_5
+
+
+class StereoMonoTab(PhaseTab):
+    def __init__(self, main_window):
+        super().__init__(
+            main_window, 4, "Stereo to Mono",
+            "Convert fake-stereo files to mono. Saves ~50 % file size per converted file.",
+            help_text=(
+                "Detects 'fake stereo' files where L and R channels carry the same signal.\n\n"
                 "  • Dual mono (auto-selected): L−R diff ≤ −90 dBFS\n"
                 "  • One-sided (auto-selected): one channel ≥ 40 dB quieter\n"
-                "  • Near-mono (Loose mode, opt-in): diff ≤ −60 dBFS\n"
-                "  Saves ~50 % per converted file.\n\n"
-                "Silence Removal — trims leading/trailing silence.\n"
-                f"  Threshold: {config.SILENCE_THRESHOLD_DB} dBFS, "
-                f"min duration: {config.SILENCE_MIN_DURATION}s\n\n"
-                "Enable Loose mode to also surface near-mono files."
+                "  • Near-mono (Loose mode, opt-in): diff between −90 and −60 dBFS\n\n"
+                "Enable Loose mode to also surface near-mono files "
+                "(shown unchecked — review carefully)."
             ),
         )
         self.include_near_mono = False
@@ -802,24 +834,16 @@ class FileSizeTab(PhaseTab):
         toolbar.insertWidget(3, loose_chk)
 
     def build_table(self):
-        return FindingsTable(["Type", "File", "Issue", "Current", "Target", "Savings"])
+        return FindingsTable(["File", "Classification", "Current", "Target", "Savings"])
 
     def row_builder(self, f):
-        if f.phase == 4:
-            cls = f.extra.get("classification", "?")
-            cls_pretty = {
-                "dual_mono": "Dual mono",
-                "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
-                "near_mono": "Near-mono",
-            }.get(cls, cls)
-            return ["Stereo→Mono", f.path.name, cls_pretty,
-                    f.current, f.target, core.format_bytes(f.savings_bytes)]
-        lead  = f.extra.get("lead",  0.0)
-        trail = f.extra.get("trail", 0.0)
-        issue = (f"{lead:.2f}s lead" if lead  >= config.SILENCE_MIN_DURATION else "") + \
-                (" / " if lead >= config.SILENCE_MIN_DURATION and trail >= config.SILENCE_MIN_DURATION else "") + \
-                (f"{trail:.2f}s trail" if trail >= config.SILENCE_MIN_DURATION else "")
-        return ["Silence", f.path.name, issue,
+        cls = f.extra.get("classification", "?")
+        cls_pretty = {
+            "dual_mono": "Dual mono",
+            "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
+            "near_mono": "Near-mono",
+        }.get(cls, cls)
+        return [f.path.name, cls_pretty,
                 f.current, f.target, core.format_bytes(f.savings_bytes)]
 
     def scan_fn(self):
@@ -827,21 +851,13 @@ class FileSizeTab(PhaseTab):
         cache    = self.main_window.cache
         only_new = self.main_window.only_new
         include_near_mono = self.include_near_mono
-        def combined(base_dir, cache, only_new, progress_cb=None, file_cb=None, stop_event=None):
-            findings = core.scan_phase_4(base_dir, cache, only_new, include_near_mono,
-                                          progress_cb, file_cb, stop_event)
-            if not (stop_event and stop_event.is_set()):
-                findings += core.scan_phase_5(base_dir, cache, only_new,
-                                               progress_cb, file_cb, stop_event)
-            return findings
-        return (combined, (base, cache, only_new))
+        def run(base_dir, cache, only_new, progress_cb=None, file_cb=None, stop_event=None):
+            return core.scan_phase_4(base_dir, cache, only_new, include_near_mono,
+                                     progress_cb, file_cb, stop_event)
+        return (run, (base, cache, only_new))
 
     def apply_fn(self):
-        def dispatch(finding):
-            if finding.phase == 4:
-                return core.apply_phase_4(finding)
-            return core.apply_phase_5(finding)
-        return dispatch
+        return core.apply_phase_4
 
 
 # ============================================================================
@@ -985,10 +1001,11 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(Phase1Tab(self), "1. Format")
-        self.tabs.addTab(NamesTab(self),  "2. Names")
-        self.tabs.addTab(FileSizeTab(self), "3. File Size")
-        self.tabs.addTab(Phase6Tab(self), "4. BPM")
+        self.tabs.addTab(Phase1Tab(self),    "1. Wav Format")
+        self.tabs.addTab(SilenceTab(self),   "2. Silence Remover")
+        self.tabs.addTab(StereoMonoTab(self),"3. Stereo to Mono")
+        self.tabs.addTab(Phase6Tab(self),    "4. BPM")
+        self.tabs.addTab(NamesTab(self),     "5. Name")
         self.tabs.setEnabled(False)
         splitter.addWidget(self.tabs)
 
