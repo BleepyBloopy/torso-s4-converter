@@ -2,6 +2,24 @@
 
 ---
 
+## [v7.5] – 2026-06-06
+
+### Changed
+- **5 tabs instead of 4** — new order: 1. Wav Format → 2. Silence Remover → 3. Stereo to Mono → 4. BPM → 5. Name
+  - "Format" renamed to "Wav Format"
+  - "File Size" tab split into dedicated **Silence Remover** (phase 5) and **Stereo to Mono** (phase 4) tabs, each with their own columns and apply logic
+  - "Names" renamed to "Name" and moved to last position
+- **Name tab prefix UI** — "Override (optional)" column replaced with **"New prefix (opt.)"** with a clearer purpose: type a string to prepend to files *after* stripping the detected prefix (e.g. enter `Caribou140-` to produce `Caribou140-Kick.wav` from `SharedPrefix_Kick.wav`). "Detected Prefix" column remains editable for correcting the auto-detected value
+- **Column auto-sizing** — table columns resize to content after every scan; last column always stretches to fill the full width; capped at 35% of viewport so long folder paths cannot push other columns off screen
+
+### Fixed
+- **Silence Remover always returned 0 findings** — `silencedetect` filter output is logged by ffmpeg at `AV_LOG_INFO` level, which was suppressed by `-v error`. Changed to `-v info`; all files with leading/trailing silence are now correctly detected
+- **Silence scan skipped recently-renamed folders** — `apply_phase_2` was calling `FolderMarkers.mark_folder` after a prefix rename, blocking subsequent silence/stereo scans via the fast-scan folder marker. Now uses `FolderMarkers.invalidate` again so other tabs can rescan the folder
+- **Replacement prefix re-detected on rescan** — after a Names apply that added a new prefix (e.g. `Caribou140-`), the next scan would detect that prefix as something to strip. Fixed by marking each renamed file as phase-2-done in the cache (`cache.mark_phase_done(new_path, 2)`); `scan_phase_2` filters these files out so the new prefix is never re-reported
+- **0-findings scan collapsed column headers** — `resizeColumnToContents` with no rows shrinks all columns to header-text width. Now only called when there are rows to measure against
+
+---
+
 ## [v7.4] – 2026-06-06
 
 ### Changed

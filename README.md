@@ -1,4 +1,4 @@
-# Torso S-4 Smart Sample Converter v7
+# Torso S-4 Smart Sample Converter v7.5
 
 Standardize, optimize, and organize sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
@@ -50,7 +50,7 @@ uv run python -m s4converter.gui
 2. Click into a phase tab and click **Scan**
 3. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
 4. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
-5. For the **Names** tab (Phase 2) and **BPM** tab (Phase 4), edit values inline if needed
+5. For the **Name** tab (Tab 5) and **BPM** tab (Tab 4), edit values inline if needed
 6. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
@@ -76,33 +76,24 @@ uv run python -m s4converter.cli --full-scan
 
 ---
 
-## The Phases
+## The Tabs
 
-### Phase 1 — Format Normalization
+### Tab 1 — Wav Format
 Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC) and WAV files at the wrong sample rate or bit depth, and converts everything to **48 kHz / 16-bit WAV** in a single pass. Originals are deleted on success (configurable via `delete_original` in `config.json`).
 
-### Phase 2 — Name Cleanup *(Prefix Removal + Long Filenames)*
-Two passes in one tab:
+### Tab 2 — Silence Remover
+Trims leading and trailing silence from WAV files using ffmpeg's `silencedetect` filter. Both threshold (default −60 dBFS) and minimum duration (default 0.1 s) are configurable in `config.json`. Stem exports from DAWs commonly have 30–60 seconds of leading silence — this removes it in one pass.
 
-**Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
-Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.
-
-**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives.
-
-Edit the value inline for each row — it acts as the prefix to strip for Prefix rows, and the new name for Long Name rows. Running prefix removal first often brings long names under the limit automatically.
-
-### Phase 3 — File Size *(Stereo → Mono + Silence Removal)*
-Two passes in one tab:
-
-**Stereo → Mono** — detects "fake stereo" files and converts them to mono, saving ~50% file size.
-- `dual_mono` (diff ≤ −90 dB) — selected by default
+### Tab 3 — Stereo to Mono
+Detects "fake stereo" files and converts them to mono, saving ~50% file size per file.
+- `dual_mono` (L−R diff ≤ −90 dB) — selected by default
 - `one_side` (one channel > 40 dB louder) — selected by default
-- `near_mono` (diff ≤ −60 dB) — **Loose mode** only, unchecked by default
+- `near_mono` (diff between −90 and −60 dB) — **Loose mode** only, unchecked by default
 - `true_stereo` — never flagged
 
-**Silence Removal** — trims leading and trailing silence. Threshold and minimum duration configurable in `config.json`.
+Enable **Loose mode** to also surface near-mono files (listed but unchecked — review carefully).
 
-### Phase 4 — BPM Detection
+### Tab 4 — BPM
 Detects BPM for rhythmic loops using `aubio` and offers to rename files with a `{bpm}_` prefix (e.g. `120_my_loop.wav`). Having BPM in the filename enables proper sync-mode loading in DISC.
 
 Multiple filters prevent false positives on one-shots and recordings:
@@ -113,6 +104,20 @@ Multiple filters prevent false positives on one-shots and recordings:
 - Folder name hints — folders named "one shot", "sfx", "ambient", etc. are skipped
 
 **High-confidence detections (≥ 0.75) are checked by default.** Medium and low confidence results are shown but unchecked — review before selecting.
+
+### Tab 5 — Name
+Two passes in one tab:
+
+**Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
+Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.
+
+The table has two editable columns:
+- **Detected Prefix** — what the scan found; double-click to correct it. This is the string that gets stripped.
+- **New prefix (opt.)** — leave empty to just strip the prefix. Type a replacement string to prepend it after stripping. Example: enter `Caribou140-` to rename `Shared_Kick.wav` → `Caribou140-Kick.wav`.
+
+**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives. Edit the suggested name in the New prefix column.
+
+Running prefix removal first often brings long names under the limit automatically.
 
 ---
 
@@ -142,9 +147,11 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 | `s4_root` | `/Volumes/S-4/SAMPLES` | Path to the S-4's internal storage |
 | `usb_root` | `/Volumes/USB` | Path to your external USB drive |
 | `delete_original` | `true` | Delete source file after non-WAV conversion |
-| `name_length_limit` | `70` | Max filename stem length (Phase 2 / Names tab) |
-| `stereo_strict_threshold_db` | `-90.0` | dual_mono threshold (Phase 3 / File Size tab) |
-| `stereo_loose_threshold_db` | `-60.0` | near_mono threshold (Phase 3 / File Size tab) |
+| `name_length_limit` | `70` | Max filename stem length (Tab 5 / Name tab) |
+| `silence_threshold_db` | `-60.0` | Silence detection threshold (Tab 2 / Silence Remover) |
+| `silence_min_duration` | `0.1` | Minimum silence length to trim, in seconds (Tab 2) |
+| `stereo_strict_threshold_db` | `-90.0` | dual_mono threshold (Tab 3 / Stereo to Mono) |
+| `stereo_loose_threshold_db` | `-60.0` | near_mono threshold (Tab 3 / Stereo to Mono) |
 | `bpm_min_confidence` | `0.4` | Minimum confidence to report a BPM result |
 | `bpm_skip_folder_hints` | (list) | Folder name substrings that skip BPM detection |
 
@@ -156,8 +163,8 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 |---------|-------|---------|-------|
 | GUI | ✅ | ✅ | ✅ |
 | CLI | ✅ | ✅ | ✅ |
-| Phases 1–3 | ✅ | ✅ | ✅ |
-| Phase 4 (BPM) | ✅ | ⚠️ untested | ✅ |
+| Tabs 1–3, 5 | ✅ | ✅ | ✅ |
+| Tab 4 (BPM) | ✅ | ⚠️ untested | ✅ |
 | One-click launcher | ✅ `launch-s4converter-MacOS.command` | ✅ `launch-s4converter-Windows.bat` | run `./setup.sh` then `uv run python -m s4converter.gui` |
 | Auto-setup | ✅ via Homebrew | manual (winget) | manual (apt/pacman) |
 
@@ -211,8 +218,9 @@ The GUI automatically prevents your Mac from idle-sleeping during a scan or appl
 1. **CCC mirrors** `~/Download Samples/...` → `USB/Download Samples/...`
 2. After CCC sync, run **Phase 1 (`--quick`)** to convert any new non-WAV files — done in seconds for incremental
 3. Run the **GUI** for occasional cleanups:
-   - Phase 2 (Names) to strip pack prefixes and shorten long filenames
-   - Phase 3 (File Size) to halve file size on fake-stereo files and trim silence
-   - Phase 4 (BPM) to tag loops with BPM for proper S-4 sync mode
+   - Tab 2 (Silence Remover) to trim leading/trailing silence from stem exports
+   - Tab 3 (Stereo to Mono) to halve file size on fake-stereo files
+   - Tab 4 (BPM) to tag loops with BPM for proper S-4 sync mode
+   - Tab 5 (Name) to strip pack prefixes and shorten long filenames
 
 The converter operates in-place, so your Mac source folder stays untouched as your archive.
