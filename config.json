@@ -17,6 +17,23 @@
   "bpm_min_confidence": 0.4,
   "bpm_target_min": 70,
   "bpm_target_max": 175,
+  "sync_pairs": [
+    {
+      "label": "My Samples",
+      "source": "/Volumes/cl_desktop/cl_desktop_ex/Music/Ableton/User Library/Samples/My Samples",
+      "usb": "/Volumes/USB/My Samples"
+    },
+    {
+      "label": "Download Samples",
+      "source": "/Volumes/cl_desktop/cl_desktop_ex/Music/Ableton/Download Sample",
+      "usb": "/Volumes/USB/Download Samples"
+    },
+    {
+      "label": "Download Stems",
+      "source": "/Volumes/cl_desktop/cl_desktop_ex/Music/Ableton/Download Song Stems",
+      "usb": "/Volumes/USB/Download Stems"
+    }
+  ],
   "bpm_skip_folder_hints": [
     "one shot", "one-shot", "oneshot",
     "fx", "sfx", "foley",

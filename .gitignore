@@ -5,3 +5,5 @@ __pycache__/
 .s4_cache.json
 .s4_converter.log
 .s4_processed
+.s4_sync.json
+.s4_sync.tmp

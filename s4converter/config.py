@@ -101,6 +101,20 @@ BPM_SKIP_FOLDER_HINTS = set(_u.get("bpm_skip_folder_hints", [
     "ambience", "ambient", "foley", "sfx", "hit", "hits",
 ]))
 
+# --- Sync pairs (Mac source → USB destination) ---
+SYNC_DB_PATH = Path(__file__).parent.parent / ".s4_sync.json"
+
+_raw_pairs = _u.get("sync_pairs", [])
+SYNC_PAIRS = [
+    {
+        "label": p.get("label", Path(p["source"]).name),
+        "source": Path(p["source"]),
+        "usb": Path(p["usb"]),
+    }
+    for p in _raw_pairs
+    if "source" in p and "usb" in p
+]
+
 # --- Exclusions ---
 EXCLUDED_FOLDER_NAMES = {
     ".Trashes", ".Spotlight-V100", ".fseventsd", "System Volume Information",

@@ -27,7 +27,7 @@ except ImportError:
     print("  pip install PyQt6")
     sys.exit(1)
 
-from . import config, core
+from . import config, core, sync
 from .cache import FolderMarkers, ProbeCache
 
 # Preset paths for the drive dropdown — sourced from config.json
@@ -130,6 +130,81 @@ class ApplyWorker(QObject):
     def _finalize(self, touched_folders: set) -> None:
         if self.cache is not None and touched_folders:
             self.cache.save()
+
+
+class SyncCopyWorker(QObject):
+    """Copy new/updated/moved findings from source to USB in a background thread."""
+    progress = pyqtSignal(int, int)
+    current_file = pyqtSignal(str)
+    finished = pyqtSignal(int, int, list)   # ok, fail, duplicated_usb_paths
+    stopped = pyqtSignal(int, int, list)
+    error = pyqtSignal(str)
+
+    def __init__(self, findings: list, tracker: "sync.SyncTracker"):
+        super().__init__()
+        self.findings = findings
+        self.tracker = tracker
+        import threading
+        self.stop_event = threading.Event()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> None:
+        ok = fail = 0
+        duplicated: list = []   # old USB paths that were duplicated (user may want to delete)
+        total = len(self.findings)
+        try:
+            for i, f in enumerate(self.findings, 1):
+                if self.stop_event.is_set():
+                    self.tracker.save()
+                    self.stopped.emit(ok, fail, duplicated)
+                    return
+                self.current_file.emit(Path(f.source_path).name)
+                if f.status == "deleted":
+                    result = sync.apply_delete_usb(f, self.tracker)
+                else:
+                    if f.status == "moved":
+                        duplicated.append(str(f.usb_path))
+                    result = sync.apply_copy(f, self.tracker)
+                if result:
+                    ok += 1
+                else:
+                    fail += 1
+                self.progress.emit(i, total)
+            self.tracker.save()
+            self.finished.emit(ok, fail, duplicated)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class BootstrapWorker(QObject):
+    """Register all current source files as synced (CCC handoff) in a background thread."""
+    progress = pyqtSignal(int, int)
+    current_file = pyqtSignal(str)
+    finished = pyqtSignal(int)   # count registered
+    error = pyqtSignal(str)
+
+    def __init__(self, tracker: "sync.SyncTracker", synced_at: str):
+        super().__init__()
+        self.tracker = tracker
+        self.synced_at = synced_at
+        import threading
+        self.stop_event = threading.Event()
+
+    def run(self) -> None:
+        try:
+            count = sync.bootstrap_all(
+                self.tracker,
+                self.synced_at,
+                progress_cb=self.progress.emit,
+                file_cb=self.current_file.emit,
+                stop_event=self.stop_event,
+            )
+            self.tracker.save()
+            self.finished.emit(count)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class ReportWorker(QObject):
@@ -928,6 +1003,478 @@ class Phase6Tab(PhaseTab):
 
 
 # ============================================================================
+# Sync tab — must be first tab; independent of loaded drive
+# ============================================================================
+
+class SyncTab(QWidget):
+    """Tab 0: sync new/changed Mac source files to USB before processing.
+
+    Operates independently of the drive loaded for processing.  The tracker
+    (.s4_sync.json at the project root) persists across drive remounts.
+    """
+
+    # Emitted when sync+convert is requested so MainWindow can chain Phase 1.
+    request_phase1_scan = pyqtSignal()
+
+    STATUS_COLORS = {
+        "new":     "#1a7a1a",
+        "updated": "#b36200",
+        "moved":   "#1a4fa0",
+        "deleted": "#a01a1a",
+    }
+
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.findings: List[sync.SyncFinding] = []
+        self.thread: Optional[QThread] = None
+        self._running: bool = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+
+        desc = QLabel(
+            "Copy new and updated source files from Mac to USB.  "
+            "Files already converted or renamed by this app are never overwritten — "
+            "only genuinely new or changed source files are copied."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #888; padding: 4px;")
+        layout.addWidget(desc)
+
+        # Per-pair status row
+        self._pair_labels: dict = {}
+        pair_row = QHBoxLayout()
+        for pair in config.SYNC_PAIRS:
+            lbl = QLabel(f"{pair['label']}: …")
+            lbl.setStyleSheet("color: #555; font-size: 11px; padding: 2px 10px 2px 0;")
+            self._pair_labels[pair["label"]] = lbl
+            pair_row.addWidget(lbl)
+        if not config.SYNC_PAIRS:
+            pair_row.addWidget(QLabel("No sync pairs configured in config.json."))
+        pair_row.addStretch()
+        layout.addLayout(pair_row)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+
+        self.scan_btn = QPushButton("🔍 Scan")
+        self.scan_btn.clicked.connect(self.start_scan)
+        toolbar.addWidget(self.scan_btn)
+
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(lambda: self.table.select_all(True))
+        toolbar.addWidget(self.select_all_btn)
+
+        self.select_none_btn = QPushButton("Select None")
+        self.select_none_btn.clicked.connect(lambda: self.table.select_all(False))
+        toolbar.addWidget(self.select_none_btn)
+
+        toolbar.addStretch()
+
+        self.count_label = QLabel("0 findings")
+        toolbar.addWidget(self.count_label)
+
+        self.stop_btn = QPushButton("⏹ Stop")
+        self.stop_btn.clicked.connect(self._request_stop)
+        self.stop_btn.setVisible(False)
+        toolbar.addWidget(self.stop_btn)
+
+        self.apply_btn = QPushButton("✓ Copy Selected")
+        self.apply_btn.clicked.connect(self.start_copy)
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setStyleSheet(
+            "background-color: #2c7a3d; color: white; padding: 6px 12px;"
+        )
+        toolbar.addWidget(self.apply_btn)
+
+        self.sync_convert_btn = QPushButton("⚡ Sync + Convert")
+        self.sync_convert_btn.setToolTip(
+            "Scan for new files, copy them all to USB, then immediately run the "
+            "Wav Format scan so everything is ready in one step."
+        )
+        self.sync_convert_btn.clicked.connect(self.start_sync_and_convert)
+        self.sync_convert_btn.setStyleSheet(
+            "background-color: #1e5a8a; color: white; padding: 6px 12px;"
+        )
+        toolbar.addWidget(self.sync_convert_btn)
+
+        self.bootstrap_btn = QPushButton("Bootstrap…")
+        self.bootstrap_btn.setToolTip(
+            "Register all current source files as already synced (CCC handoff). "
+            "No files are copied — only the tracker is updated."
+        )
+        self.bootstrap_btn.clicked.connect(self.start_bootstrap)
+        toolbar.addWidget(self.bootstrap_btn)
+
+        layout.addLayout(toolbar)
+
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
+
+        self._current_file_label = QLabel("")
+        self._current_file_label.setVisible(False)
+        mono = QFont("Menlo, Consolas, monospace")
+        mono.setPointSize(11)
+        self._current_file_label.setFont(mono)
+        self._current_file_label.setStyleSheet("color: #444; padding-left: 24px;")
+        layout.addWidget(self._current_file_label)
+
+        self.table = FindingsTable(["Pair", "Status", "File / Path", "Size"])
+        layout.addWidget(self.table)
+
+        self._refresh_pair_labels()
+
+    # ------------------------------------------------------------------
+    # Pair status labels
+    # ------------------------------------------------------------------
+
+    def _refresh_pair_labels(self) -> None:
+        tracker = self.main_window.sync_tracker
+        for pair in config.SYNC_PAIRS:
+            lbl = self._pair_labels.get(pair["label"])
+            if lbl is None:
+                continue
+            count = tracker.count_for_pair(pair["label"])
+            last = tracker.last_sync_time(pair["label"])
+            src_ok = pair["source"].exists()
+            usb_ok = pair["usb"].exists()
+            if not src_ok or not usb_ok:
+                missing = [n for n, ok in [("source", src_ok), ("USB", usb_ok)] if not ok]
+                lbl.setText(f"⚠ {pair['label']}: {', '.join(missing)} not mounted")
+                lbl.setStyleSheet("color: #c0392b; font-size: 11px; padding: 2px 10px 2px 0;")
+            else:
+                last_str = ""
+                if last:
+                    try:
+                        from datetime import datetime as _dt
+                        last_str = f" · last sync {_dt.fromisoformat(last).strftime('%Y-%m-%d')}"
+                    except ValueError:
+                        last_str = f" · last sync {last[:10]}"
+                lbl.setText(f"✓ {pair['label']}: {count:,} tracked{last_str}")
+                lbl.setStyleSheet("color: #2c7a3d; font-size: 11px; padding: 2px 10px 2px 0;")
+
+    # ------------------------------------------------------------------
+    # Table row builder
+    # ------------------------------------------------------------------
+
+    def _row_builder(self, f: sync.SyncFinding) -> list:
+        if f.status == "moved":
+            path_str = f"{f.rel_path}  →  {f.moved_to_rel_path}"
+        else:
+            path_str = f.rel_path
+        size_str = core.format_bytes(f.size) if f.size else "—"
+        return [f.pair_label, f.status.upper(), path_str, size_str]
+
+    # ------------------------------------------------------------------
+    # Scan
+    # ------------------------------------------------------------------
+
+    def start_scan(self) -> None:
+        if not config.SYNC_PAIRS:
+            QMessageBox.warning(self, "No Sync Pairs", "No sync pairs configured in config.json.")
+            return
+        self._start_scan_worker(on_done=self._on_scan_done)
+
+    def _start_scan_worker(self, on_done) -> None:
+        tracker = self.main_window.sync_tracker
+
+        def scan_fn(tracker, progress_cb=None, file_cb=None, stop_event=None):
+            return sync.scan_all(tracker, progress_cb, file_cb, stop_event)
+
+        self._set_running(True, "Scanning…")
+        self.thread = QThread()
+        self.worker = ScanWorker(scan_fn, tracker)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.scan_item.connect(
+            lambda p: self._current_file_label.setText(f"⟳  {Path(p).name}")
+        )
+        self.worker.finished.connect(on_done)
+        self.worker.stopped.connect(self._on_scan_stopped)
+        self.worker.error.connect(self._on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.thread.start()
+
+    def _on_scan_done(self, findings: list) -> None:
+        self.findings = findings
+        self.table.set_findings(findings, self._row_builder)
+        self._color_status_cells()
+        n = len(findings)
+        self.count_label.setText(f"{n} findings")
+        self._set_running(False)
+        self.apply_btn.setEnabled(bool(findings))
+        self._refresh_pair_labels()
+        self.main_window.log(f"[Sync] Scan complete: {n} findings.")
+
+    def _color_status_cells(self) -> None:
+        """Color the Status column cells by status type."""
+        from PyQt6.QtGui import QColor
+        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
+        for row in range(displayed):
+            f = self.findings[row]
+            color = self.STATUS_COLORS.get(f.status, "#333")
+            item = self.table.item(row, 2)  # Status is col 2 (after ✓ and Pair)
+            if item:
+                item.setForeground(QColor(color))
+
+    def _on_scan_stopped(self) -> None:
+        self._set_running(False)
+        self.main_window.log("[Sync] Scan stopped.")
+
+    # ------------------------------------------------------------------
+    # Copy selected
+    # ------------------------------------------------------------------
+
+    def start_copy(self) -> None:
+        selected = self.table.get_selected_findings()
+        if not selected:
+            QMessageBox.information(self, "Nothing Selected", "No items are checked.")
+            return
+
+        new_upd = [f for f in selected if f.status in ("new", "updated", "moved")]
+        dels = [f for f in selected if f.status == "deleted"]
+
+        msg_parts = []
+        if new_upd:
+            msg_parts.append(f"Copy {len(new_upd)} file(s) to USB")
+        if dels:
+            msg_parts.append(
+                f"Delete {len(dels)} file(s) from USB "
+                "(source was deleted — cannot be undone)"
+            )
+
+        reply = QMessageBox.question(
+            self, "Confirm Sync",
+            "\n".join(msg_parts) + "\n\nProceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._run_copy_worker(selected, on_done=self._on_copy_done)
+
+    def _run_copy_worker(self, findings: list, on_done) -> None:
+        tracker = self.main_window.sync_tracker
+        self._set_running(True, f"0 / {len(findings):,} files")
+        self.thread = QThread()
+        self.worker = SyncCopyWorker(findings, tracker)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self._on_copy_progress)
+        self.worker.current_file.connect(
+            lambda name: self._current_file_label.setText(f"⟳  {name}")
+        )
+        self.worker.finished.connect(on_done)
+        self.worker.stopped.connect(self._on_copy_stopped)
+        self.worker.error.connect(self._on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.thread.start()
+
+    def _on_copy_progress(self, done: int, total: int) -> None:
+        self.progress.setMaximum(total)
+        self.progress.setValue(done)
+        self.count_label.setText(f"{done:,} / {total:,} files")
+
+    def _on_copy_done(self, ok: int, fail: int, duplicated: list) -> None:
+        self._set_running(False)
+        self._refresh_pair_labels()
+        self.main_window.log(f"[Sync] Copy done: {ok} succeeded, {fail} failed.")
+        msg = f"{ok} file(s) copied successfully."
+        if fail:
+            msg += f"\n{fail} failed — check log."
+        if duplicated:
+            msg += (
+                f"\n\n{len(duplicated)} file(s) were duplicated on USB (moved from source):\n"
+                + "\n".join(f"  {p}" for p in duplicated[:8])
+                + ("\n  …" if len(duplicated) > 8 else "")
+                + "\n\nWould you like to delete these old USB copies now?"
+            )
+            reply = QMessageBox.question(
+                self, "Delete Old USB Copies?",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._delete_old_usb_copies(duplicated)
+            else:
+                QMessageBox.information(self, "Sync Complete", f"{ok} file(s) copied.")
+        else:
+            QMessageBox.information(self, "Sync Complete", msg)
+
+    def _delete_old_usb_copies(self, paths: list) -> None:
+        deleted = skipped = 0
+        for p in paths:
+            try:
+                Path(p).unlink(missing_ok=True)
+                deleted += 1
+            except OSError:
+                skipped += 1
+        self.main_window.log(f"[Sync] Deleted {deleted} old USB copies, {skipped} skipped.")
+
+    def _on_copy_stopped(self, ok: int, fail: int, duplicated: list) -> None:
+        self._set_running(False)
+        self._refresh_pair_labels()
+        self.main_window.log(f"[Sync] Copy stopped. {ok} succeeded, {fail} failed.")
+
+    # ------------------------------------------------------------------
+    # Sync + Convert (chained operation)
+    # ------------------------------------------------------------------
+
+    def start_sync_and_convert(self) -> None:
+        if not config.SYNC_PAIRS:
+            QMessageBox.warning(self, "No Sync Pairs", "No sync pairs configured in config.json.")
+            return
+
+        def after_scan(findings: list) -> None:
+            self.findings = findings
+            self.table.set_findings(findings, self._row_builder)
+            self._color_status_cells()
+            to_copy = [f for f in findings if f.status in ("new", "updated", "moved")]
+            n_total = len(findings)
+            n_del = len([f for f in findings if f.status == "deleted"])
+            self.count_label.setText(f"{n_total} findings")
+            self._set_running(False)
+            self._refresh_pair_labels()
+
+            if not to_copy and not n_del:
+                self.main_window.log("[Sync] Nothing to sync — already up to date.")
+                QMessageBox.information(
+                    self, "Already Up to Date",
+                    "No new or changed files found. Switching to Wav Format tab."
+                )
+                self._switch_to_phase1()
+                return
+
+            msg = f"Found {len(to_copy)} file(s) to copy to USB."
+            if n_del:
+                msg += f"\n{n_del} deleted-source finding(s) skipped (not auto-deleted)."
+            msg += "\n\nCopy now, then run Wav Format scan?"
+            reply = QMessageBox.question(
+                self, "Sync + Convert",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.apply_btn.setEnabled(bool(findings))
+                return
+
+            def after_copy(ok: int, fail: int, duplicated: list) -> None:
+                self._on_copy_done(ok, fail, duplicated)
+                self.main_window.log("[Sync+Convert] Sync done — switching to Wav Format tab.")
+                self._switch_to_phase1()
+
+            self._run_copy_worker(to_copy, on_done=after_copy)
+
+        self._start_scan_worker(on_done=after_scan)
+
+    def _switch_to_phase1(self) -> None:
+        """Switch to the Wav Format tab and auto-start its scan."""
+        tabs = self.main_window.tabs
+        for i in range(tabs.count()):
+            if isinstance(tabs.widget(i), Phase1Tab):
+                tabs.setCurrentIndex(i)
+                tabs.widget(i).start_scan()
+                return
+
+    # ------------------------------------------------------------------
+    # Bootstrap (CCC handoff)
+    # ------------------------------------------------------------------
+
+    def start_bootstrap(self) -> None:
+        if not config.SYNC_PAIRS:
+            QMessageBox.warning(self, "No Sync Pairs", "No sync pairs configured in config.json.")
+            return
+
+        from datetime import datetime as _dt
+        today = _dt.now().strftime("%Y-%m-%d")
+        reply = QMessageBox.question(
+            self, "Bootstrap Sync Tracker",
+            "This registers all current source files as already synced "
+            f"(timestamp: {today}).\n\n"
+            "No files are copied. Only the tracker is updated.\n\n"
+            "After this, future scans will only detect files added or changed "
+            "on the Mac after today.\n\n"
+            "Run bootstrap now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from datetime import timezone as _tz
+        synced_at = _dt.now(_tz.utc).isoformat()
+        tracker = self.main_window.sync_tracker
+
+        self._set_running(True, "Registering…")
+        self.thread = QThread()
+        self.worker = BootstrapWorker(tracker, synced_at)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.current_file.connect(
+            lambda p: self._current_file_label.setText(f"⟳  {Path(p).name}")
+        )
+        self.worker.finished.connect(self._on_bootstrap_done)
+        self.worker.error.connect(self._on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.thread.start()
+
+    def _on_bootstrap_done(self, count: int) -> None:
+        self._set_running(False)
+        self._refresh_pair_labels()
+        self.main_window.log(f"[Sync] Bootstrap complete: {count:,} files registered.")
+        QMessageBox.information(
+            self, "Bootstrap Complete",
+            f"{count:,} source files registered as synced.\n\n"
+            "Future scans will only detect new or changed files."
+        )
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def _on_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.progress.setMaximum(total)
+            self.progress.setValue(done)
+
+    def _on_error(self, msg: str) -> None:
+        self._set_running(False)
+        self.main_window.log(f"[Sync] ERROR: {msg}")
+        QMessageBox.critical(self, "Sync Error", msg)
+
+    def _request_stop(self) -> None:
+        if hasattr(self, "worker"):
+            self.worker.stop()
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.setText("⏹ Stopping…")
+
+    def _set_running(self, running: bool, label: str = "") -> None:
+        self._running = running
+        # SyncTab-specific controls not covered by main_window.set_busy
+        self.sync_convert_btn.setEnabled(not running)
+        self.bootstrap_btn.setEnabled(not running)
+        self.stop_btn.setVisible(running)
+        self.stop_btn.setText("⏹ Stop")
+        self.stop_btn.setEnabled(True)
+        self.progress.setVisible(running)
+        self._current_file_label.setVisible(running)
+        if running and label:
+            self.count_label.setText(label)
+        if not running:
+            self._current_file_label.setText("")
+        # Manages caffeinate + scan_btn + apply_btn across all tabs (including this one)
+        self.main_window.set_busy(running)
+
+
+# ============================================================================
 # Main window
 # ============================================================================
 
@@ -943,6 +1490,7 @@ class MainWindow(QMainWindow):
         self._busy: bool = False
         self._caffeinate_proc = None
         self._report_thread: Optional[QThread] = None
+        self.sync_tracker = sync.SyncTracker()
 
         self._build_ui()
         self._load_default_dir()
@@ -1008,12 +1556,15 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.tabs = QTabWidget()
+        self.tabs.addTab(SyncTab(self),      "0. Sync")
         self.tabs.addTab(Phase1Tab(self),    "1. Wav Format")
         self.tabs.addTab(SilenceTab(self),   "2. Silence Remover")
         self.tabs.addTab(StereoMonoTab(self),"3. Stereo to Mono")
         self.tabs.addTab(Phase6Tab(self),    "4. BPM")
         self.tabs.addTab(NamesTab(self),     "5. Name")
-        self.tabs.setEnabled(False)
+        # SyncTab (index 0) is always enabled; processing tabs need a loaded drive
+        for i in range(1, self.tabs.count()):
+            self.tabs.setTabEnabled(i, False)
         splitter.addWidget(self.tabs)
 
         self.log_view = QPlainTextEdit()
@@ -1087,7 +1638,8 @@ class MainWindow(QMainWindow):
         self.cache = ProbeCache(path, cache_root=config.cache_root_for(path))
         core.setup_logging(path, verbose=False)
 
-        self.tabs.setEnabled(True)
+        for i in range(self.tabs.count()):
+            self.tabs.setTabEnabled(i, True)
         self.report_btn.setEnabled(True)
         self.eject_btn.setEnabled(True)
         cache_root = self.cache.cache_file.parent
