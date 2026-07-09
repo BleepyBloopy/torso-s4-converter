@@ -364,28 +364,65 @@ def apply_delete_usb(finding: SyncFinding, tracker: SyncTracker) -> bool:
 # Bootstrap (CCC handoff)
 # ---------------------------------------------------------------------------
 
+def _build_usb_stem_index(usb: Path) -> Dict[str, set]:
+    """Build {usb_folder_str: {lowercase_stem, ...}} for quick USB presence checks.
+
+    Used by bootstrap to detect files that are already on USB, even if the app
+    converted their format (e.g. Kick.aiff on source → Kick.wav on USB).
+    """
+    index: Dict[str, set] = {}
+    try:
+        for p in usb.rglob("*"):
+            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS:
+                key = str(p.parent)
+                index.setdefault(key, set()).add(p.stem.lower())
+    except OSError:
+        pass
+    return index
+
+
 def bootstrap_all(
     tracker: SyncTracker,
     synced_at: str,
     progress_cb: Optional[Callable] = None,
     file_cb: Optional[Callable] = None,
     stop_event=None,
-) -> int:
-    """Register all current source files as already synced without copying anything.
+) -> Tuple[int, int]:
+    """Register source files that are already present on USB as synced.
 
-    Call this once to hand off from CCC.  Future scans will only flag files
-    added or changed on the source after this point.
+    Ground-truth approach: checks what is actually on USB rather than
+    relying on file timestamps (audio samples have old mtimes from the
+    producer, not from when you added them to the Mac folder).
+
+    A source file is considered 'already synced' if a file with the same
+    stem exists on USB at the corresponding path — handles the case where
+    the app already converted the format (e.g. .aiff → .wav).
+
+    Files with no USB counterpart are left unregistered and appear as NEW
+    on the next scan.
+
+    Returns (registered, skipped_new) counts.
     """
-    total_count = 0
+    registered = skipped_new = 0
     for pair in config.SYNC_PAIRS:
         if stop_event and stop_event.is_set():
             break
         label = pair["label"]
         source: Path = pair["source"]
+        usb: Path = pair["usb"]
+
         if not source.exists():
             continue
+
+        if file_cb:
+            file_cb(str(source))
+
+        # Build a stem index of what's already on USB for this pair
+        usb_index = _build_usb_stem_index(usb) if usb.exists() else {}
+
         source_files = _walk_source(source, stop_event)
         n = len(source_files)
+
         for i, (rel, (mtime, size)) in enumerate(sorted(source_files.items())):
             if stop_event and stop_event.is_set():
                 break
@@ -393,6 +430,17 @@ def bootstrap_all(
                 file_cb(str(source / rel))
             if progress_cb and n:
                 progress_cb(i + 1, n)
-            tracker.bootstrap(label, rel, mtime, size, synced_at)
-            total_count += 1
-    return total_count
+
+            # Check if a file with the same stem exists on USB
+            usb_file = usb / rel
+            usb_folder_key = str(usb_file.parent)
+            usb_stems = usb_index.get(usb_folder_key, set())
+            on_usb = usb_file.stem.lower() in usb_stems
+
+            if on_usb:
+                tracker.bootstrap(label, rel, mtime, size, synced_at)
+                registered += 1
+            else:
+                skipped_new += 1  # not on USB — will appear as NEW
+
+    return registered, skipped_new

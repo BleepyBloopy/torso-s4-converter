@@ -179,10 +179,10 @@ class SyncCopyWorker(QObject):
 
 
 class BootstrapWorker(QObject):
-    """Register all current source files as synced (CCC handoff) in a background thread."""
+    """Register source files ≤ cutoff date as synced (CCC handoff) in a background thread."""
     progress = pyqtSignal(int, int)
     current_file = pyqtSignal(str)
-    finished = pyqtSignal(int)   # count registered
+    finished = pyqtSignal(int, int)   # registered, skipped_new
     error = pyqtSignal(str)
 
     def __init__(self, tracker: "sync.SyncTracker", synced_at: str):
@@ -194,7 +194,7 @@ class BootstrapWorker(QObject):
 
     def run(self) -> None:
         try:
-            count = sync.bootstrap_all(
+            registered, skipped_new = sync.bootstrap_all(
                 self.tracker,
                 self.synced_at,
                 progress_cb=self.progress.emit,
@@ -202,7 +202,7 @@ class BootstrapWorker(QObject):
                 stop_event=self.stop_event,
             )
             self.tracker.save()
-            self.finished.emit(count)
+            self.finished.emit(registered, skipped_new)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -1099,10 +1099,11 @@ class SyncTab(QWidget):
         )
         toolbar.addWidget(self.sync_convert_btn)
 
-        self.bootstrap_btn = QPushButton("Bootstrap…")
+        self.bootstrap_btn = QPushButton("Register Existing…")
         self.bootstrap_btn.setToolTip(
-            "Register all current source files as already synced (CCC handoff). "
-            "No files are copied — only the tracker is updated."
+            "One-time setup: if your USB already has files from a previous transfer, "
+            "scan source + USB to register what's already there. "
+            "New files added to the Mac after this point will appear on the next Scan."
         )
         self.bootstrap_btn.clicked.connect(self.start_bootstrap)
         toolbar.addWidget(self.bootstrap_btn)
@@ -1392,26 +1393,37 @@ class SyncTab(QWidget):
             QMessageBox.warning(self, "No Sync Pairs", "No sync pairs configured in config.json.")
             return
 
-        from datetime import datetime as _dt
-        today = _dt.now().strftime("%Y-%m-%d")
+        # Check that USB is mounted — bootstrap must compare against actual USB contents
+        missing_usb = [p["label"] for p in config.SYNC_PAIRS if not p["usb"].exists()]
+        if missing_usb:
+            QMessageBox.warning(
+                self, "USB Not Mounted",
+                f"Cannot bootstrap: USB path(s) not found for: {', '.join(missing_usb)}\n\n"
+                "Bootstrap needs to scan both Mac source and USB to determine\n"
+                "which files are already there."
+            )
+            return
+
         reply = QMessageBox.question(
-            self, "Bootstrap Sync Tracker",
-            "This registers all current source files as already synced "
-            f"(timestamp: {today}).\n\n"
-            "No files are copied. Only the tracker is updated.\n\n"
-            "After this, future scans will only detect files added or changed "
-            "on the Mac after today.\n\n"
-            "Run bootstrap now?",
+            self, "Register Existing USB Files",
+            "Scan both Mac source and USB folders to find files already on USB.\n\n"
+            "Files found on USB will be registered as synced — they won't be\n"
+            "re-copied on the next Scan.\n\n"
+            "Files on Mac source but missing from USB will appear as NEW\n"
+            "on the next Scan so you can copy them over.\n\n"
+            "No files are copied. This replaces any existing tracker data. Proceed?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        from datetime import timezone as _tz
+        from datetime import datetime as _dt, timezone as _tz
         synced_at = _dt.now(_tz.utc).isoformat()
         tracker = self.main_window.sync_tracker
+        tracker._data.clear()
+        tracker._dirty = True
 
-        self._set_running(True, "Registering…")
+        self._set_running(True, "Scanning USB + source…")
         self.thread = QThread()
         self.worker = BootstrapWorker(tracker, synced_at)
         self.worker.moveToThread(self.thread)
@@ -1426,14 +1438,17 @@ class SyncTab(QWidget):
         self.worker.error.connect(self.thread.quit)
         self.thread.start()
 
-    def _on_bootstrap_done(self, count: int) -> None:
+    def _on_bootstrap_done(self, registered: int, skipped_new: int) -> None:
         self._set_running(False)
         self._refresh_pair_labels()
-        self.main_window.log(f"[Sync] Bootstrap complete: {count:,} files registered.")
+        self.main_window.log(
+            f"[Sync] Bootstrap complete: {registered:,} registered, "
+            f"{skipped_new:,} newer files will appear as NEW."
+        )
         QMessageBox.information(
             self, "Bootstrap Complete",
-            f"{count:,} source files registered as synced.\n\n"
-            "Future scans will only detect new or changed files."
+            f"{registered:,} files registered as already synced.\n"
+            f"{skipped_new:,} newer files will appear as NEW on the next scan."
         )
 
     # ------------------------------------------------------------------
