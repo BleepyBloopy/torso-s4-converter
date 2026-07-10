@@ -1362,6 +1362,32 @@ class SyncTab(QWidget):
             self._rebuild_pair_display()
             self._refresh_pair_labels()
 
+    def _any_usb_mounted(self) -> bool:
+        return any(Path(p["usb"]).exists() for p in config.SYNC_PAIRS)
+
+    def _update_scan_buttons(self) -> None:
+        """Enable action buttons only when USB is accessible and nothing is running."""
+        has_pairs = bool(config.SYNC_PAIRS)
+        any_usb   = self._any_usb_mounted()
+        can_act   = has_pairs and any_usb
+        self.scan_btn.setEnabled(can_act)
+        self.sync_convert_btn.setEnabled(can_act)
+        self.bootstrap_btn.setEnabled(can_act)
+        if not has_pairs:
+            tip = "No sync pairs configured — click Configure Pairs… to add one."
+        elif not any_usb:
+            tip = "USB drive not mounted."
+        else:
+            tip = ""
+        self.scan_btn.setToolTip(tip)
+        self.bootstrap_btn.setToolTip(tip or
+            "One-time setup: if your USB already has files from a previous transfer, "
+            "scan source + USB to register what's already there. "
+            "New files added to the Mac after this point will appear on the next Scan.")
+        if tip:
+            self.sync_convert_btn.setToolTip(tip)
+        # else: leave sync_convert_btn's original descriptive tooltip untouched
+
     def _refresh_pair_labels(self) -> None:
         tracker = self.main_window.sync_tracker
         for pair in config.SYNC_PAIRS:
@@ -1386,6 +1412,7 @@ class SyncTab(QWidget):
                         last_str = f" · last sync {last[:10]}"
                 lbl.setText(f"✓ {pair['label']}: {count:,} tracked{last_str}")
                 lbl.setStyleSheet("color: #2c7a3d; font-size: 11px;")
+        self._update_scan_buttons()
 
     # ------------------------------------------------------------------
     # Table row builder
@@ -1704,9 +1731,10 @@ class SyncTab(QWidget):
 
     def _set_running(self, running: bool, label: str = "") -> None:
         self._running = running
-        # SyncTab-specific controls not covered by main_window.set_busy
-        self.sync_convert_btn.setEnabled(not running)
-        self.bootstrap_btn.setEnabled(not running)
+        if running:
+            # Disable immediately; _update_scan_buttons() restores correct state on stop.
+            self.sync_convert_btn.setEnabled(False)
+            self.bootstrap_btn.setEnabled(False)
         self.stop_btn.setVisible(running)
         self.stop_btn.setText("⏹ Stop")
         self.stop_btn.setEnabled(True)
@@ -1718,6 +1746,9 @@ class SyncTab(QWidget):
             self._current_file_label.setText("")
         # Manages caffeinate + scan_btn + apply_btn across all tabs (including this one)
         self.main_window.set_busy(running)
+        # After set_busy re-enables scan_btn, correct it based on USB mount state.
+        if not running:
+            self._update_scan_buttons()
 
 
 # ============================================================================
