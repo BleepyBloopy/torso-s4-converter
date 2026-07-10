@@ -21,6 +21,7 @@ try:
         QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
         QProgressBar, QPlainTextEdit, QTextEdit, QMessageBox, QStatusBar,
         QSplitter, QInputDialog, QComboBox,
+        QDialog, QDialogButtonBox, QFrame, QScrollArea,
     )
 except ImportError:
     print("PyQt6 not installed. Install with:")
@@ -1031,6 +1032,154 @@ class Phase6Tab(PhaseTab):
 
 
 # ============================================================================
+# Pair configuration dialog
+# ============================================================================
+
+class PairConfigDialog(QDialog):
+    """View, add, edit, and remove sync pairs. Saves changes to config.json."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Sync Pairs")
+        self.setMinimumWidth(720)
+        self._pair_rows: list = []
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            "Each pair copies files from a Mac source folder to a USB folder. "
+            "Changes are saved to config.json and take effect immediately."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #888; padding-bottom: 6px;")
+        layout.addWidget(info)
+
+        # Scrollable list of existing pairs
+        self._list_widget = QWidget()
+        self._list_layout = QVBoxLayout(self._list_widget)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(4)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self._list_widget)
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(120)
+        scroll.setMaximumHeight(280)
+        layout.addWidget(scroll)
+
+        for p in config.SYNC_PAIRS:
+            self._add_row(p["label"], str(p["source"]), str(p["usb"]))
+
+        if not config.SYNC_PAIRS:
+            self._list_layout.addWidget(QLabel("No pairs yet — add one below."))
+
+        # Add-new-pair form
+        add_frame = QFrame()
+        add_frame.setStyleSheet("QFrame{border:1px solid #333;border-radius:4px;padding:4px;}")
+        add_fl = QVBoxLayout(add_frame)
+        add_fl.addWidget(QLabel("Add new pair:"))
+        form_row = QHBoxLayout()
+        self._nl = QLineEdit(); self._nl.setPlaceholderText("Label")
+        self._nl.setFixedWidth(130)
+        self._ns = QLineEdit(); self._ns.setPlaceholderText("Mac source folder")
+        sb = QPushButton("…"); sb.setFixedWidth(28)
+        sb.clicked.connect(lambda: self._browse(self._ns))
+        self._nu = QLineEdit(); self._nu.setPlaceholderText("USB folder")
+        ub = QPushButton("…"); ub.setFixedWidth(28)
+        ub.clicked.connect(lambda: self._browse(self._nu))
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._add_pair)
+        for w in (self._nl, QLabel("Source:"), self._ns, sb,
+                  QLabel("USB:"), self._nu, ub, add_btn):
+            form_row.addWidget(w)
+        add_fl.addLayout(form_row)
+        layout.addWidget(add_frame)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._save)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _browse(self, line_edit: QLineEdit):
+        d = QFileDialog.getExistingDirectory(self, "Choose Folder", line_edit.text())
+        if d:
+            line_edit.setText(d)
+
+    def _add_row(self, label: str, source: str, usb: str):
+        row_w = QWidget()
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        le_lbl = QLineEdit(label); le_lbl.setFixedWidth(130)
+        le_src = QLineEdit(source)
+        le_usb = QLineEdit(usb)
+
+        def browse_src(): self._browse(le_src)
+        def browse_usb(): self._browse(le_usb)
+        sb = QPushButton("…"); sb.setFixedWidth(28); sb.clicked.connect(browse_src)
+        ub = QPushButton("…"); ub.setFixedWidth(28); ub.clicked.connect(browse_usb)
+        rm = QPushButton("✕"); rm.setFixedWidth(28)
+        rm.setStyleSheet("color:#c0392b;")
+
+        for w in (le_lbl, QLabel("→"), le_src, sb, le_usb, ub, rm):
+            row.addWidget(w if not isinstance(w, str) else QLabel(w))
+        # stretch source+usb fields
+        row.setStretchFactor(le_src, 1)
+        row.setStretchFactor(le_usb, 1)
+
+        entry = {"label": le_lbl, "source": le_src, "usb": le_usb, "widget": row_w}
+        self._pair_rows.append(entry)
+        self._list_layout.addWidget(row_w)
+
+        def remove():
+            self._pair_rows.remove(entry)
+            row_w.setParent(None)
+        rm.clicked.connect(remove)
+
+    def _add_pair(self):
+        label  = self._nl.text().strip()
+        source = self._ns.text().strip()
+        usb    = self._nu.text().strip()
+        if not label or not source or not usb:
+            QMessageBox.warning(self, "Incomplete", "Fill in Label, Source, and USB folder.")
+            return
+        self._add_row(label, source, usb)
+        self._nl.clear(); self._ns.clear(); self._nu.clear()
+
+    def _save(self):
+        import json as _json
+        cfg_path = Path(__file__).parent.parent / "config.json"
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = _json.load(f)
+        except (OSError, _json.JSONDecodeError) as e:
+            QMessageBox.critical(self, "Error", f"Cannot read config.json:\n{e}")
+            return
+
+        new_pairs = [
+            {"label": r["label"].text().strip(),
+             "source": r["source"].text().strip(),
+             "usb":    r["usb"].text().strip()}
+            for r in self._pair_rows
+            if r["label"].text().strip() and r["source"].text().strip() and r["usb"].text().strip()
+        ]
+        cfg["sync_pairs"] = new_pairs
+        try:
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                _json.dump(cfg, f, indent=2)
+        except OSError as e:
+            QMessageBox.critical(self, "Error", f"Cannot save config.json:\n{e}")
+            return
+
+        config.SYNC_PAIRS = [
+            {"label": p["label"], "source": Path(p["source"]), "usb": Path(p["usb"])}
+            for p in new_pairs
+        ]
+        self.accept()
+
+
+# ============================================================================
 # Sync tab — must be first tab; independent of loaded drive
 # ============================================================================
 
@@ -1070,19 +1219,15 @@ class SyncTab(QWidget):
         desc.setStyleSheet("color: #888; padding: 4px;")
         layout.addWidget(desc)
 
-        # Per-pair status row
-        self._pair_labels: dict = {}
-        pair_row = QHBoxLayout()
-        for pair in config.SYNC_PAIRS:
-            lbl = QLabel(f"{pair['label']}: …")
-            lbl.setStyleSheet("color: #555; font-size: 11px; padding: 2px 10px 2px 0;")
-            lbl.setToolTip(f"Source: {pair['source']}\nUSB:    {pair['usb']}")
-            self._pair_labels[pair["label"]] = lbl
-            pair_row.addWidget(lbl)
-        if not config.SYNC_PAIRS:
-            pair_row.addWidget(QLabel("No sync pairs configured in config.json."))
-        pair_row.addStretch()
-        layout.addLayout(pair_row)
+        # Per-pair status display — always shows source → USB paths
+        self._pair_status_labels: dict = {}   # label → status QLabel
+        self._pair_path_labels: dict = {}     # label → path QLabel
+        self._pairs_area = QWidget()
+        self._pairs_layout = QVBoxLayout(self._pairs_area)
+        self._pairs_layout.setContentsMargins(0, 2, 0, 2)
+        self._pairs_layout.setSpacing(2)
+        self._rebuild_pair_display()
+        layout.addWidget(self._pairs_area)
 
         # Toolbar
         toolbar = QHBoxLayout()
@@ -1128,6 +1273,11 @@ class SyncTab(QWidget):
         )
         toolbar.addWidget(self.sync_convert_btn)
 
+        self.configure_btn = QPushButton("Configure Pairs…")
+        self.configure_btn.setToolTip("Add, edit, or remove source → USB sync pairs.")
+        self.configure_btn.clicked.connect(self._open_pair_config)
+        toolbar.addWidget(self.configure_btn)
+
         self.bootstrap_btn = QPushButton("Register Existing…")
         self.bootstrap_btn.setToolTip(
             "One-time setup: if your USB already has files from a previous transfer, "
@@ -1157,13 +1307,65 @@ class SyncTab(QWidget):
         self._refresh_pair_labels()
 
     # ------------------------------------------------------------------
-    # Pair status labels
+    # Pair display
     # ------------------------------------------------------------------
+
+    def _rebuild_pair_display(self) -> None:
+        """Recreate the pair status rows (called on init and after Configure Pairs)."""
+        while self._pairs_layout.count():
+            item = self._pairs_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._pair_status_labels.clear()
+        self._pair_path_labels.clear()
+
+        if not config.SYNC_PAIRS:
+            no_lbl = QLabel("No sync pairs configured — click Configure Pairs… to add one.")
+            no_lbl.setStyleSheet("color: #c0392b; font-size: 11px;")
+            self._pairs_layout.addWidget(no_lbl)
+            return
+
+        def _abbrev(p: str, n: int = 60) -> str:
+            return ("…" + p[-(n - 1):]) if len(p) > n else p
+
+        for pair in config.SYNC_PAIRS:
+            row_w = QWidget()
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(0)
+
+            col_w = QWidget()
+            col = QVBoxLayout(col_w)
+            col.setContentsMargins(0, 0, 0, 0)
+            col.setSpacing(1)
+
+            status_lbl = QLabel(f"{pair['label']}: …")
+            status_lbl.setStyleSheet("color: #555; font-size: 11px;")
+
+            src, usb = str(pair["source"]), str(pair["usb"])
+            path_lbl = QLabel(f"  {_abbrev(src)}  →  {_abbrev(usb)}")
+            path_lbl.setStyleSheet("color: #3a3a3a; font-size: 10px;")
+            path_lbl.setToolTip(f"Source: {src}\nUSB:    {usb}")
+
+            col.addWidget(status_lbl)
+            col.addWidget(path_lbl)
+            row.addWidget(col_w)
+            row.addStretch()
+            self._pairs_layout.addWidget(row_w)
+
+            self._pair_status_labels[pair["label"]] = status_lbl
+            self._pair_path_labels[pair["label"]] = path_lbl
+
+    def _open_pair_config(self) -> None:
+        dlg = PairConfigDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._rebuild_pair_display()
+            self._refresh_pair_labels()
 
     def _refresh_pair_labels(self) -> None:
         tracker = self.main_window.sync_tracker
         for pair in config.SYNC_PAIRS:
-            lbl = self._pair_labels.get(pair["label"])
+            lbl = self._pair_status_labels.get(pair["label"])
             if lbl is None:
                 continue
             count = tracker.count_for_pair(pair["label"])
@@ -1173,7 +1375,7 @@ class SyncTab(QWidget):
             if not src_ok or not usb_ok:
                 missing = [n for n, ok in [("source", src_ok), ("USB", usb_ok)] if not ok]
                 lbl.setText(f"⚠ {pair['label']}: {', '.join(missing)} not mounted")
-                lbl.setStyleSheet("color: #c0392b; font-size: 11px; padding: 2px 10px 2px 0;")
+                lbl.setStyleSheet("color: #c0392b; font-size: 11px;")
             else:
                 last_str = ""
                 if last:
@@ -1183,7 +1385,7 @@ class SyncTab(QWidget):
                     except ValueError:
                         last_str = f" · last sync {last[:10]}"
                 lbl.setText(f"✓ {pair['label']}: {count:,} tracked{last_str}")
-                lbl.setStyleSheet("color: #2c7a3d; font-size: 11px; padding: 2px 10px 2px 0;")
+                lbl.setStyleSheet("color: #2c7a3d; font-size: 11px;")
 
     # ------------------------------------------------------------------
     # Table row builder
