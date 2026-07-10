@@ -1363,7 +1363,22 @@ class SyncTab(QWidget):
             self._refresh_pair_labels()
 
     def _any_usb_mounted(self) -> bool:
-        return any(Path(p["usb"]).exists() for p in config.SYNC_PAIRS)
+        """Return True if any pair's USB mount point is accessible.
+
+        Walks up from the configured USB path until finding an ancestor that
+        exists, so a freshly mounted drive with no subfolders yet still
+        enables the buttons (apply_copy creates subfolders on first copy).
+        """
+        for p in config.SYNC_PAIRS:
+            candidate = Path(p["usb"])
+            while not candidate.exists():
+                parent = candidate.parent
+                if parent == candidate:  # reached filesystem root
+                    break
+                candidate = parent
+            if candidate.exists() and str(candidate) != "/":
+                return True
+        return False
 
     def _update_scan_buttons(self) -> None:
         """Enable action buttons only when USB is accessible and nothing is running."""
