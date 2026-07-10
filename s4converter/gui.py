@@ -894,7 +894,7 @@ class SilenceTab(PhaseTab):
 class StereoMonoTab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
-            main_window, 4, "Stereo to Mono",
+            main_window, 4, "Fake Stereo to Mono",
             "Convert fake-stereo files to mono. Saves ~50 % file size per converted file.",
             help_text=(
                 "Detects 'fake stereo' files where L and R channels carry the same signal.\n\n"
@@ -986,19 +986,25 @@ class Phase6Tab(PhaseTab):
     def row_builder(self, f):
         bpm      = f.extra.get("bpm", "?")
         conf_lbl = f.extra.get("conf_label", "?")
-        dur      = f.extra.get("duration", 0.0)
+        dur      = f.extra.get("duration")
         return [
             f.path.name,
             str(int(bpm)) if isinstance(bpm, (int, float)) else str(bpm),
             conf_lbl,
-            f"{dur:.1f}s",
+            f"{dur:.1f}s" if dur is not None else "—",
             f.target,
         ]
 
     def scan_fn(self):
-        return (core.scan_phase_6,
-                (self.main_window.base_dir, self.main_window.cache,
-                 self.main_window.only_new))
+        base     = self.main_window.base_dir
+        cache    = self.main_window.cache
+        only_new = self.main_window.only_new
+        def combined(base_dir, cache, only_new, progress_cb=None, file_cb=None, stop_event=None):
+            findings = core.scan_bpm_relabel(base_dir, only_new, progress_cb, file_cb, stop_event)
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_phase_6(base_dir, cache, only_new, progress_cb, file_cb, stop_event)
+            return findings
+        return (combined, (base, cache, only_new))
 
     def get_apply_extra(self, selected):
         new_names = {}
@@ -1584,9 +1590,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(SyncTab(self),      "0. Sync")
         self.tabs.addTab(Phase1Tab(self),    "1. Wav Format")
         self.tabs.addTab(SilenceTab(self),   "2. Silence Remover")
-        self.tabs.addTab(StereoMonoTab(self),"3. Stereo to Mono")
-        self.tabs.addTab(Phase6Tab(self),    "4. BPM")
-        self.tabs.addTab(NamesTab(self),     "5. Name")
+        self.tabs.addTab(NamesTab(self),     "3. Name")
+        self.tabs.addTab(StereoMonoTab(self),"4. Fake Stereo to Mono")
+        self.tabs.addTab(Phase6Tab(self),    "5. BPM")
         # SyncTab (index 0) is always enabled; processing tabs need a loaded drive
         for i in range(1, self.tabs.count()):
             self.tabs.setTabEnabled(i, False)

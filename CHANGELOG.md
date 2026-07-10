@@ -2,6 +2,18 @@
 
 ---
 
+## [v7.8] – 2026-07-09
+
+### Changed
+- **Tab reorder** — Name tab moved to position 3 (right after Silence Remover); BPM moved to position 5 (last). New order: Sync → Wav Format → Silence Remover → Name → Fake Stereo to Mono → BPM.
+- **"Stereo to Mono" → "Fake Stereo to Mono"** — more accurately describes what the tab does (only flags files where channels are identical or heavily imbalanced, never true stereo).
+- **BPM output format** — phase 6 now renames files to `{bpm}bpm_` prefix (e.g. `120bpm_kick.wav`) instead of the previous `120_` format, so the S-4 can register the value as the default BPM.
+
+### Added
+- **BPM relabel scan** — new `scan_bpm_relabel` in `core.py` runs alongside phase 6 in the BPM tab. Finds WAV files whose stem already starts with a bare 2–3 digit number (e.g. `120_kick.wav`) but is missing the `bpm` label the S-4 needs, and suggests renaming them (→ `120bpm_kick.wav`). Results appear at the top of the BPM tab table, auto-selected, with Confidence shown as `—` (no audio analysis needed).
+
+---
+
 ## [v7.7] – 2026-07-09
 
 ### Added

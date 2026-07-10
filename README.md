@@ -1,4 +1,4 @@
-# Torso S-4 Smart Sample Converter v7.7
+# Torso S-4 Smart Sample Converter v7.8
 
 Standardize, organize, and sync audio sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
@@ -106,7 +106,7 @@ Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC) and WAV files at the 
 ### Tab 2 — Silence Remover
 Trims leading and trailing silence from WAV files using ffmpeg's `silencedetect` filter. Both threshold (default −60 dBFS) and minimum duration (default 0.1 s) are configurable in `config.json`. Stem exports from DAWs commonly have 30–60 seconds of leading silence — this removes it in one pass.
 
-### Tab 3 — Stereo to Mono
+### Tab 4 — Fake Stereo to Mono
 Detects "fake stereo" files and converts them to mono, saving ~50% file size per file.
 - `dual_mono` (L−R diff ≤ −90 dB) — selected by default
 - `one_side` (one channel > 40 dB louder) — selected by default
@@ -115,8 +115,10 @@ Detects "fake stereo" files and converts them to mono, saving ~50% file size per
 
 Enable **Loose mode** to also surface near-mono files (listed but unchecked — review carefully).
 
-### Tab 4 — BPM
-Detects BPM for rhythmic loops using `aubio` and offers to rename files with a `{bpm}_` prefix (e.g. `120_my_loop.wav`). Having BPM in the filename enables proper sync-mode loading in DISC.
+### Tab 5 — BPM
+Detects BPM for rhythmic loops using `aubio` and renames files with a `{bpm}bpm_` prefix (e.g. `120bpm_my_loop.wav`). Having BPM in the filename in this format enables proper sync-mode loading in DISC.
+
+Also scans for files that already have a bare number prefix but are missing the `bpm` label (e.g. `120_kick.wav` → `120bpm_kick.wav`). These are auto-selected and shown at the top of the results.
 
 Multiple filters prevent false positives on one-shots and recordings:
 - Duration gate (skips files outside `bpm_min_duration`–`bpm_max_duration`)
@@ -127,7 +129,7 @@ Multiple filters prevent false positives on one-shots and recordings:
 
 **High-confidence detections (≥ 0.75) are checked by default.** Medium and low confidence results are shown but unchecked — review before selecting.
 
-### Tab 5 — Name
+### Tab 3 — Name
 Three passes in one tab:
 
 **Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.

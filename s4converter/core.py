@@ -944,10 +944,53 @@ _BPM_IN_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches a bare 2–3 digit number at the START of a stem followed by a separator,
+# but NOT if "bpm" already follows the number (those are already correctly labeled).
+_BPM_BARE_PREFIX_RE = re.compile(r'^(\d{2,3})([_\s\-])(?!bpm)', re.IGNORECASE)
+
 
 def _stem_has_bpm(path: Path) -> bool:
     """Return True if the filename already contains a BPM-like number."""
     return bool(_BPM_IN_NAME_RE.search(path.stem))
+
+
+def scan_bpm_relabel(
+    base_dir: Path,
+    only_new: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    file_cb: Optional[Callable[[str], None]] = None,
+    stop_event=None,
+) -> List[Finding]:
+    """Find WAV files with a bare numeric BPM prefix (e.g. '120_kick') and
+    suggest adding the 'bpm' label (e.g. '120bpm_kick') so the S-4 registers it."""
+    findings = []
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
+    total = len(all_files)
+    for i, path in enumerate(all_files):
+        if stop_event and stop_event.is_set():
+            break
+        if progress_cb and i % 100 == 0:
+            progress_cb(i, total)
+        if file_cb:
+            file_cb(str(path))
+        m = _BPM_BARE_PREFIX_RE.match(path.stem)
+        if not m:
+            continue
+        num, sep = m.group(1), m.group(2)
+        rest     = path.stem[m.end():]
+        new_stem = f"{num}bpm{sep}{rest}"
+        new_name = new_stem + path.suffix
+        findings.append(Finding(
+            phase=6, path=path,
+            reason="Missing 'bpm' label",
+            current=path.name,
+            target=new_name,
+            selected=True,
+            extra={"bpm": int(num), "conf_label": "—", "duration": None, "type": "relabel"},
+        ))
+    if progress_cb:
+        progress_cb(total, total)
+    return findings
 
 
 def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
@@ -1004,7 +1047,7 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
         if bpm_val is None:
             continue
 
-        bpm_prefix = f"{int(bpm_val)}_"
+        bpm_prefix = f"{int(bpm_val)}bpm_"
         new_name   = bpm_prefix + path.name
 
         conf_label = ("High" if confidence >= 0.75 else
