@@ -247,9 +247,15 @@ def _propagate_ancestor_markers(base_dir: Path, seed_folders) -> None:
     Writes/refreshes .s4_processed markers so that iter_files with
     skip_clean_folders can fire dirs.clear() at the highest level possible,
     making subsequent fast scans traverse only the folders that actually changed.
+
+    base_dir itself is intentionally never marked: it has no pair-level context
+    and marking it would cause dirs.clear() to skip everything on the next scan,
+    including folders that received new files via sync.
     """
     visited: set = set(seed_folders)
     for folder in list(seed_folders):
+        if folder == base_dir:
+            continue  # never mark the drive root
         FolderMarkers.mark_folder(folder)
         parent = folder.parent
         while parent != base_dir and parent not in visited:
@@ -312,8 +318,15 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
 
             # If EVERYTHING was clean, also mark all ancestor folders up to
             # base_dir so the next fast scan can skip from the root level.
+            # Include _visited_folders so that top-level folders whose entire
+            # subtree was already leaf-marked (e.g. Download Samples when all
+            # its leaf folders have markers) also get propagated — they appear
+            # in _visited_folders even though none of their files are in
+            # clean_folders (iter_files skips their leaves via existing markers).
             if not needs_probe:
-                _propagate_ancestor_markers(base_dir, clean_folders)
+                _propagate_ancestor_markers(
+                    base_dir, clean_folders | set(_visited_folders)
+                )
     else:
         needs_probe = all_candidates
 
