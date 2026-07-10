@@ -1383,15 +1383,19 @@ class SyncTab(QWidget):
         return False
 
     def _update_scan_buttons(self) -> None:
-        """Enable action buttons only when USB is accessible and nothing is running."""
-        has_pairs = bool(config.SYNC_PAIRS)
-        any_usb   = self._any_usb_mounted()
-        can_act   = has_pairs and any_usb
+        """Enable action buttons using the same gate as all other tabs:
+        drive must be loaded AND USB must be reachable."""
+        has_pairs   = bool(config.SYNC_PAIRS)
+        drive_ok    = self.main_window.base_dir is not None
+        any_usb     = self._any_usb_mounted()
+        can_act     = has_pairs and drive_ok and any_usb
         self.scan_btn.setEnabled(can_act)
         self.sync_convert_btn.setEnabled(can_act)
         self.bootstrap_btn.setEnabled(can_act)
         if not has_pairs:
             tip = "No sync pairs configured — click Configure Pairs… to add one."
+        elif not drive_ok:
+            tip = "Click Load to load the drive first."
         elif not any_usb:
             tip = "USB drive not mounted."
         else:
@@ -1403,7 +1407,6 @@ class SyncTab(QWidget):
             "New files added to the Mac after this point will appear on the next Scan.")
         if tip:
             self.sync_convert_btn.setToolTip(tip)
-        # else: leave sync_convert_btn's original descriptive tooltip untouched
 
     def _refresh_pair_labels(self) -> None:
         tracker = self.main_window.sync_tracker
