@@ -1048,6 +1048,7 @@ class SyncTab(QWidget):
         for pair in config.SYNC_PAIRS:
             lbl = QLabel(f"{pair['label']}: …")
             lbl.setStyleSheet("color: #555; font-size: 11px; padding: 2px 10px 2px 0;")
+            lbl.setToolTip(f"Source: {pair['source']}\nUSB:    {pair['usb']}")
             self._pair_labels[pair["label"]] = lbl
             pair_row.addWidget(lbl)
         if not config.SYNC_PAIRS:

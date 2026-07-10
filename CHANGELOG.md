@@ -2,6 +2,21 @@
 
 ---
 
+## [v7.6] – 2026-07-09
+
+### Added
+- **Tab 0 — Sync** (always enabled, even before loading a drive): copies new and updated files from Mac source folders to USB without overwriting files already converted or renamed by this app.
+  - `s4converter/sync.py` — `SyncTracker` class persists source-file identity (path + mtime + size) in `.s4_sync.json` at the project root. Tracker is source-centric: USB-side reorganisation is invisible to subsequent scans.
+  - **Move detection** — if a source file disappears from one path and appears at another with the same filename + size, it is flagged `MOVED` instead of `DELETED`. Default action: duplicate the existing USB file (preserving any app conversions) to the new USB path, then prompt to delete the old copy.
+  - `DELETED` findings start unchecked — nothing is removed from USB without explicit user confirmation.
+  - **⚡ Sync + Convert** button: scans for new source files, copies them all to USB, then automatically switches to the Wav Format tab and starts its scan — the full first-session workflow in one click.
+  - **Register Existing…** button: one-time setup for users who already have files on USB from a previous transfer. Scans both Mac source and USB, registers files already present on USB as synced (by stem match, handles format conversions). Files missing from USB appear as NEW on the next scan.
+- Sync pairs configured in `config.json` under `sync_pairs` (label, source path, USB path per pair).
+- Pair status labels in Sync tab show tracked file count and last sync date; hover shows full source → USB paths.
+- `.s4_sync.json` added to `.gitignore` (contains machine-local absolute paths; 50 MB+ for large libraries).
+
+---
+
 ## [v7.5] – 2026-06-06
 
 ### Changed

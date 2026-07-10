@@ -1,9 +1,10 @@
-# Torso S-4 Smart Sample Converter v7.5
+# Torso S-4 Smart Sample Converter v7.6
 
-Standardize, optimize, and organize sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
+Standardize, organize, and sync audio sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
-Key features over the original v6 script:
+Key features:
 
+- **Internal sync** — copies new/changed Mac source files to USB without re-copying files already converted or renamed by this app; detects source-side moves; never deletes from USB without confirmation
 - **Persistent ffprobe cache** — only probes new/changed files (150× faster re-scans)
 - **Per-folder markers** — skips entire folders that haven't changed since last run
 - **Per-file done flags** — files confirmed clean or already converted are skipped on every subsequent scan; re-scans after adding new samples are O(new files), not O(total library)
@@ -13,7 +14,7 @@ Key features over the original v6 script:
 - **Dry-run mode** — preview every change before touching anything (CLI only)
 - **Atomic writes** — converter never leaves half-finished files
 
-Tested against libraries of ~300 GB / 30 000+ samples nested across a handful of top-level subfolders on a USB drive.
+Tested against libraries of ~300 GB / 270 000+ samples nested across a handful of top-level subfolders on a USB drive.
 
 ---
 
@@ -46,12 +47,21 @@ Clone or download the repo, then double-click the launcher for your platform:
 uv run python -m s4converter.gui
 ```
 
-1. Select your drive from the dropdown (or set a custom path) and click **Load**
-2. Click into a phase tab and click **Scan**
-3. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
-4. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
-5. For the **Name** tab (Tab 5) and **BPM** tab (Tab 4), edit values inline if needed
-6. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
+**Typical first session (new files dropped on Mac):**
+
+1. Open the app — the **Sync** tab (Tab 0) is active immediately, no drive load needed
+2. Click **⚡ Sync + Convert** — copies new source files to USB, then automatically switches to the Wav Format tab and starts its scan
+3. Review and apply findings in each processing tab as needed
+
+**Manual workflow:**
+
+1. Go to **Tab 0 — Sync**, click **Scan**, review findings, click **Copy Selected**
+2. Select your drive from the dropdown and click **Load**
+3. Click into a processing tab and click **Scan**
+4. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
+5. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
+6. For the **Name** tab (Tab 5) and **BPM** tab (Tab 4), edit values inline if needed
+7. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
 
@@ -77,6 +87,18 @@ uv run python -m s4converter.cli --full-scan
 ---
 
 ## The Tabs
+
+### Tab 0 — Sync
+Copies new and updated files from Mac source folders to USB. The tracker (`.s4_sync.json`) records source-file identity (path + mtime + size) so that files already converted or renamed by this app are never re-copied — it's source-centric, so USB-side reorganisation is transparent.
+
+- **NEW** — file exists on source but was never synced
+- **UPDATED** — source file changed since last sync (different mtime or size)
+- **MOVED** — file disappeared from one source path, appeared at another with the same filename + size. Default action: duplicate the existing USB file to the new path (preserving any conversions), then ask whether to delete the old USB copy
+- **DELETED** — file removed from source; starts unchecked — never auto-deleted from USB
+
+Configure sync pairs in `config.json` under `sync_pairs`. Hover a pair label to see its full source → USB mapping.
+
+**Register Existing…** — one-time setup if your USB already has files from a previous transfer. Scans both source and USB, registers files found on USB as synced. Run this once; afterwards just use Scan or ⚡ Sync + Convert.
 
 ### Tab 1 — Wav Format
 Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC) and WAV files at the wrong sample rate or bit depth, and converts everything to **48 kHz / 16-bit WAV** in a single pass. Originals are deleted on success (configurable via `delete_original` in `config.json`).
@@ -146,6 +168,7 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 |-----|---------|-------------|
 | `s4_root` | `/Volumes/S-4/SAMPLES` | Path to the S-4's internal storage |
 | `usb_root` | `/Volumes/USB` | Path to your external USB drive |
+| `sync_pairs` | `[]` | List of `{label, source, usb}` objects for Tab 0 sync |
 | `delete_original` | `true` | Delete source file after non-WAV conversion |
 | `name_length_limit` | `70` | Max filename stem length (Tab 5 / Name tab) |
 | `silence_threshold_db` | `-60.0` | Silence detection threshold (Tab 2 / Silence Remover) |
@@ -175,6 +198,7 @@ Edit `config.json` to change paths and thresholds — no Python knowledge requir
 ```
 torso-s4-converter/
 ├── config.json        ← edit this to change paths and thresholds
+├── .s4_sync.json      ← sync tracker DB (auto-created, gitignored)
 ├── requirements.txt
 ├── CHANGELOG.md
 ├── README.md
@@ -182,6 +206,7 @@ torso-s4-converter/
     ├── config.py      ← loads config.json, holds internal constants
     ├── cache.py       ← ProbeCache + FolderMarkers
     ├── core.py        ← scan and apply logic (UI-agnostic)
+    ├── sync.py        ← SyncTracker + Mac→USB sync logic (Tab 0)
     ├── cli.py         ← command-line interface
     └── gui.py         ← PyQt6 graphical interface
 ```
@@ -215,12 +240,18 @@ The GUI automatically prevents your Mac from idle-sleeping during a scan or appl
 
 ## Workflow Recommendation
 
-1. **CCC mirrors** `~/Download Samples/...` → `USB/Download Samples/...`
-2. After CCC sync, run **Phase 1 (`--quick`)** to convert any new non-WAV files — done in seconds for incremental
-3. Run the **GUI** for occasional cleanups:
-   - Tab 2 (Silence Remover) to trim leading/trailing silence from stem exports
-   - Tab 3 (Stereo to Mono) to halve file size on fake-stereo files
-   - Tab 4 (BPM) to tag loops with BPM for proper S-4 sync mode
-   - Tab 5 (Name) to strip pack prefixes and shorten long filenames
+**When you drop new samples on the Mac:**
 
-The converter operates in-place, so your Mac source folder stays untouched as your archive.
+1. Open the app → **Tab 0 (Sync)** → click **⚡ Sync + Convert**
+   - Copies all new/changed source files to USB
+   - Automatically runs the Wav Format scan on completion
+2. Apply the Wav Format findings to convert any non-WAV files
+3. Run other tabs as needed (Silence Remover, Stereo to Mono, BPM, Name)
+
+**First-time setup (USB already has files):**
+
+1. Plug in USB
+2. Tab 0 → **Register Existing…** — scans both Mac and USB, registers files already on USB so they won't be re-copied
+3. After that, use the normal workflow above
+
+The converter operates in-place on USB; the Mac source folder is never modified.
