@@ -1927,6 +1927,13 @@ class MainWindow(QMainWindow):
         self.log(f"Loaded drive: {path}")
         self.log(f"Cache: {self.cache.size()} entries — {self.cache.cache_file}")
 
+        # Refresh Sync tab pair labels so button states update when a drive is loaded.
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if isinstance(tab, SyncTab):
+                tab._refresh_pair_labels()
+                break
+
     def check_base_dir(self) -> bool:
         if self.base_dir is None or not core.check_drive_present(self.base_dir):
             QMessageBox.warning(self, "No Drive",
