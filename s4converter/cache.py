@@ -130,7 +130,7 @@ class FolderMarkers:
     @staticmethod
     def is_folder_clean(folder: Path, exts: Optional[set] = None) -> bool:
         """Return True if marker exists AND no file in folder is newer than marker.
-        
+
         Note: only checks direct files in `folder`, not subfolders.
         Accounts for FAT32's 2-second mtime resolution.
         """
@@ -139,6 +139,17 @@ class FolderMarkers:
             return False
 
         threshold = marker_time + config.FAT32_MTIME_TOLERANCE
+
+        # Fast path: directory mtime only updates when files are added/deleted/
+        # renamed inside it. If it hasn't changed since the marker, skip the
+        # per-file stat walk entirely (O(1) instead of O(N files)).
+        try:
+            if folder.stat().st_mtime <= threshold:
+                return True
+        except OSError:
+            return False
+
+        # Slow path: directory changed — check individual files.
         try:
             for entry in folder.iterdir():
                 if entry.is_file() and entry.name != config.FOLDER_MARKER_NAME:

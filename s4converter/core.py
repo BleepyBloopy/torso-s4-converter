@@ -72,12 +72,15 @@ def is_hidden_or_appledouble(p: Path) -> bool:
 
 
 def iter_files(base_dir: Path, skip_clean_folders: bool = False,
-               extensions: Optional[set] = None) -> Iterator[Path]:
+               extensions: Optional[set] = None,
+               folder_cb: Optional[Callable[[str], None]] = None) -> Iterator[Path]:
     base_dir = base_dir.resolve()
     for root, dirs, files in os.walk(base_dir):
         dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
                    and not d.startswith(".")]
         root_path = Path(root)
+        if folder_cb:
+            folder_cb(str(root_path))
         if skip_clean_folders and FolderMarkers.is_folder_clean(root_path, extensions):
             continue
         for name in files:
@@ -254,7 +257,8 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     """
     findings: List[Finding] = []
     all_exts  = config.NON_WAV_AUDIO_EXTS | {".wav"}
-    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts))
+    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts,
+                                folder_cb=file_cb))
     if not candidates:
         return findings
 
