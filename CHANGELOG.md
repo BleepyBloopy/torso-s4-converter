@@ -2,6 +2,20 @@
 
 ---
 
+## [v7.7] – 2026-07-09
+
+### Added
+- **Non-ASCII romanization in Tab 5 (Name)** — third scan pass in the Name tab that finds filenames containing non-English characters and suggests ASCII transliterations the S-4 can read.
+  - Chinese (CJK Unified Ideographs) → pinyin without tone marks via `pypinyin` (e.g. `踢鼓_Loop` → `tigu_Loop`; syllables joined without spaces).
+  - Accented Latin, Cyrillic, hiragana, katakana, hangul, and all other non-ASCII → best-effort ASCII via `unidecode` (e.g. `Café_Beat` → `Cafe_Beat`).
+  - Mixed filenames are processed character by character — ASCII chars pass through unchanged.
+  - Result shown in the **New Name** column (editable before applying); no files are changed until you click Apply.
+  - New dependencies: `unidecode>=1.3` and `pypinyin>=0.48` (both pure Python, no native build required).
+  - Both packages degrade gracefully if missing: `pypinyin` absent → CJK falls back to `unidecode`; `unidecode` absent → non-ASCII chars are dropped from the suggested name.
+- **Name column header renamed** — "New prefix (opt.)" → "New Name (opt.)" to reflect its wider use across prefix removal, long-name shortening, and romanization.
+
+---
+
 ## [v7.6] – 2026-07-09
 
 ### Added

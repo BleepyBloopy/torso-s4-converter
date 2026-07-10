@@ -1,4 +1,4 @@
-# Torso S-4 Smart Sample Converter v7.6
+# Torso S-4 Smart Sample Converter v7.7
 
 Standardize, organize, and sync audio sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
@@ -128,16 +128,23 @@ Multiple filters prevent false positives on one-shots and recordings:
 **High-confidence detections (≥ 0.75) are checked by default.** Medium and low confidence results are shown but unchecked — review before selecting.
 
 ### Tab 5 — Name
-Two passes in one tab:
+Three passes in one tab:
 
 **Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
 Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.
 
 The table has two editable columns:
 - **Detected Prefix** — what the scan found; double-click to correct it. This is the string that gets stripped.
-- **New prefix (opt.)** — leave empty to just strip the prefix. Type a replacement string to prepend it after stripping. Example: enter `Caribou140-` to rename `Shared_Kick.wav` → `Caribou140-Kick.wav`.
+- **New Name (opt.)** — leave empty to just strip the prefix. Type a replacement string to prepend it after stripping. Example: enter `Caribou140-` to rename `Shared_Kick.wav` → `Caribou140-Kick.wav`.
 
-**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives. Edit the suggested name in the New prefix column.
+**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives. Edit the suggested name in the New Name column.
+
+**Non-ASCII** — finds filenames containing non-English characters (Chinese, Japanese, Korean, accented Latin, Cyrillic, etc.) and suggests ASCII transliterations so the S-4 can read them:
+- Chinese → pinyin without tones (e.g. `踢鼓_Loop` → `tigu_Loop`)
+- Accented Latin → stripped accent (e.g. `Café` → `Cafe`)
+- All other scripts → best-effort ASCII via unidecode
+
+Review the suggested name in the New Name column and edit before applying if needed.
 
 Running prefix removal first often brings long names under the limit automatically.
 

@@ -725,20 +725,24 @@ class NamesTab(PhaseTab):
     def __init__(self, main_window):
         super().__init__(
             main_window, 2, "Name Cleanup",
-            "Strip shared prefixes and shorten long filenames. "
+            "Strip shared prefixes, shorten long filenames, and romanize non-ASCII names. "
             "Edit values inline before applying.",
             help_text=(
-                "Combines two name-related cleanup passes:\n\n"
+                "Three name-related cleanup passes:\n\n"
                 "Prefix Removal — scans every subfolder for shared filename prefixes.\n"
                 "  Example: KickDrum_Tight.wav, KickDrum_Open.wav → Tight.wav, Open.wav\n"
                 f"  (min prefix: {config.MIN_PREFIX_LENGTH} chars, min group: {config.MIN_GROUP_SIZE} files)\n\n"
                 f"Long Filenames — finds files with stems > {config.NAME_LENGTH_LIMIT} chars.\n"
                 "  Suggested shorter names are auto-generated.\n\n"
+                "Non-ASCII — finds filenames with non-English characters (Chinese, accented\n"
+                "  Latin, Cyrillic, etc.) and suggests ASCII transliterations.\n"
+                "  Chinese → pinyin (e.g. 踢鼓 → tigu), accented → stripped accent (é → e).\n"
+                "  Edit the suggested name in the New Name column before applying.\n\n"
                 "Prefix rows have two columns:\n"
                 "  • Detected Prefix — the shared prefix the scan found; double-click to edit\n"
                 "  • New prefix (opt.) — if non-empty, prepended to each file after stripping\n"
                 "    e.g. type 'Caribou140-' to rename 'Prefix_Kick.wav' → 'Caribou140-Kick.wav'\n\n"
-                "Long Name rows: edit the New prefix column to set the new filename.\n\n"
+                "Long Name / Non-ASCII rows: edit the New Name column to set the new filename.\n\n"
                 "Tip: run prefix removal first — stripping a prefix often brings names "
                 "under the length limit automatically."
             ),
@@ -746,7 +750,7 @@ class NamesTab(PhaseTab):
 
     def build_table(self):
         return FindingsTable(
-            ["Type", "File / Folder", "Detail", "Detected Prefix", "New prefix (opt.)"],
+            ["Type", "File / Folder", "Detail", "Detected Prefix", "New Name (opt.)"],
             editable_cols=[4, 5],
         )
 
@@ -756,9 +760,11 @@ class NamesTab(PhaseTab):
             affected = len(f.extra.get("affected_files", []))
             try:    loc = str(f.path.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path)
-            # Detected Prefix: read-only, shows what was found.
-            # Override: empty by default (strip the detected prefix); user can type a custom one.
             return ["Prefix", loc, f"{affected} files", prefix, ""]
+        elif f.phase == 7:
+            try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path.parent)
+            return ["Non-ASCII", f.current, f.reason, "", f.target]
         else:
             suggestions = f.extra.get("suggestions", [])
             suggested   = suggestions[0] if suggestions else ""
@@ -774,6 +780,8 @@ class NamesTab(PhaseTab):
             findings = core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event, cache=cache)
             if not (stop_event and stop_event.is_set()):
                 findings += core.scan_phase_3(base_dir, only_new, progress_cb, file_cb, stop_event)
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_phase_7(base_dir, only_new, progress_cb, file_cb, stop_event)
             return findings
         return (combined, (base, only_new))
 
@@ -790,9 +798,9 @@ class NamesTab(PhaseTab):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # Col 4 = Detected Prefix (editable), col 5 = New prefix (opt.).
+        # Col 4 = Detected Prefix (editable), col 5 = New Name (opt.).
         # Phase 2: strip col 4; if col 5 non-empty, prepend it to each renamed file.
-        # Phase 3 (long names): col 5 is the new filename.
+        # Phase 3 (long names) / Phase 7 (non-ASCII): col 5 is the new filename stem.
         detected_map = {id(f): self.table.get_col_value(f, 4) for f in selected}
         override_map  = {id(f): self.table.get_col_value(f, 5) for f in selected}
 
@@ -803,7 +811,6 @@ class NamesTab(PhaseTab):
             override = override_map.get(id(finding), "").strip()
             detected = detected_map.get(id(finding), "").strip()
             if finding.phase == 2:
-                # Strip the (possibly user-edited) detected prefix; optionally prepend override.
                 result = core.apply_phase_2(
                     finding,
                     override_prefix=detected or None,
@@ -812,6 +819,8 @@ class NamesTab(PhaseTab):
                     log_cb=lambda msg: log(f"[{self.title}] {msg}"),
                 )
                 return bool(result)
+            if finding.phase == 7:
+                return core.apply_phase_7(finding, override)
             return core.apply_phase_3(finding, override)
 
         self.main_window.set_busy(True)

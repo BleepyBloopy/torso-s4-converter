@@ -53,9 +53,9 @@ s4converter/
 | 2 | Silence Remover | Trims leading/trailing silence (scan_phase_5 / apply_phase_5) |
 | 3 | Stereo to Mono | Converts fake-stereo to mono (scan_phase_4 / apply_phase_4); has Loose mode checkbox |
 | 4 | BPM | BPM detection via `aubio`, renames with `{bpm}_` prefix (high-confidence auto-selected) |
-| 5 | Name | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) combined |
+| 5 | Name | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) + non-ASCII romanization (scan_phase_7) combined |
 
-Tab 0 (Sync) is always enabled even before loading a drive. Tabs 1–5 require a drive to be loaded. Internal phase numbers (used in `Finding.phase` and core functions) are still 1–6.
+Tab 0 (Sync) is always enabled even before loading a drive. Tabs 1–5 require a drive to be loaded. Internal phase numbers (used in `Finding.phase` and core functions) are 1–7 (phase 7 lives in the Name tab alongside phases 2 and 3).
 
 ## Core patterns
 
@@ -75,7 +75,9 @@ Tab 0 (Sync) is always enabled even before loading a drive. Tabs 1–5 require a
 
 **`FolderMarkers`:** After a successful apply, a `.s4_processed` hidden file is touched in each folder. Incremental scans (`only_new=True`) skip folders where no file is newer than the marker. Any rename/conversion calls `FolderMarkers.invalidate(folder)` to force re-scan of that folder next time.
 
-**Names tab (phase 2) — two-column prefix UI:** The `NamesTab` table has columns `["Type", "File/Folder", "Detail", "Detected Prefix", "New prefix (opt.)"]` with `editable_cols=[4, 5]`. For Prefix rows: "Detected Prefix" (col 4) is editable — double-click to correct the prefix that gets stripped. "New prefix (opt.)" (col 5) is optional — if non-empty, it is prepended to each file after the detected prefix is stripped (e.g. enter "Caribou140-" to rename "DetectedPrefix_Kick.wav" → "Caribou140-Kick.wav"). For Long Name rows: col 4 is empty, col 5 shows the suggested short name. `apply_phase_2` accepts `override_prefix` (what to strip) and `replacement_prefix` (what to prepend). Re-reads the folder live when `override_prefix` is set to avoid stale `affected_files` mismatches. Columns auto-resize to content after each scan.
+**Names tab (phases 2, 3, 7) — two-column rename UI:** The `NamesTab` table has columns `["Type", "File/Folder", "Detail", "Detected Prefix", "New Name (opt.)"]` with `editable_cols=[4, 5]`. Three row types: "Prefix" (phase 2), "Long Name" (phase 3), "Non-ASCII" (phase 7). For Prefix rows: col 4 is the detected prefix (editable); col 5 optional replacement prefix prepended after stripping. For Long Name / Non-ASCII rows: col 4 is empty; col 5 holds the suggested new stem (editable). `apply_phase_2` accepts `override_prefix` and `replacement_prefix`. `apply_phase_3` and `apply_phase_7` accept `new_name` (empty = use `finding.target`). Columns auto-resize to content after each scan.
+
+**Phase 7 romanization** (`core.romanize_stem`): processes the stem character by character. Chinese CJK Unified Ideographs → pypinyin (`Style.NORMAL`, tones stripped, syllables joined without separator). All other non-ASCII (accented Latin, Cyrillic, hiragana, katakana, hangul, etc.) → unidecode. ASCII characters pass through unchanged. Requires `unidecode` and `pypinyin` packages (both pure Python, no native build). If either package is missing, falls back gracefully (pypinyin → unidecode; unidecode → drops the character).
 
 **Parallelism:** `parallel_ffprobe()` uses `ThreadPoolExecutor` (default 4 workers) only for probing. All actual conversions are single-threaded and sequential.
 

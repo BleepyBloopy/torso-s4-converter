@@ -1042,6 +1042,130 @@ def apply_phase_6(finding: Finding, new_name: str) -> bool:
 
 
 # ============================================================================
+# Phase 7: Non-ASCII filename romanization
+# ============================================================================
+
+def _is_chinese(char: str) -> bool:
+    cp = ord(char)
+    return (
+        0x4E00 <= cp <= 0x9FFF    # CJK Unified Ideographs
+        or 0x3400 <= cp <= 0x4DBF  # CJK Extension A
+        or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility Ideographs
+    )
+
+
+def romanize_stem(stem: str) -> str:
+    """Transliterate a filename stem to ASCII.
+
+    Uses pypinyin for Chinese characters (better pinyin output) and unidecode
+    for all other non-ASCII: accented Latin, Cyrillic, hiragana, hangul, etc.
+    """
+    if stem.isascii():
+        return stem
+
+    try:
+        from pypinyin import lazy_pinyin, Style as PinyinStyle
+        _pypinyin = lazy_pinyin
+        _pinyin_normal = PinyinStyle.NORMAL
+    except ImportError:
+        _pypinyin = None
+
+    try:
+        from unidecode import unidecode as _uni
+    except ImportError:
+        _uni = None
+
+    parts = []
+    cjk_buf = []
+
+    def flush_cjk():
+        if not cjk_buf:
+            return
+        text = "".join(cjk_buf)
+        if _pypinyin is not None:
+            parts.append("".join(_pypinyin(text, style=_pinyin_normal)))
+        elif _uni is not None:
+            parts.append(_uni(text))
+        else:
+            parts.extend(cjk_buf)
+        cjk_buf.clear()
+
+    for char in stem:
+        if _is_chinese(char):
+            cjk_buf.append(char)
+        else:
+            flush_cjk()
+            if char.isascii():
+                parts.append(char)
+            elif _uni is not None:
+                t = _uni(char).strip()
+                if t and t != "[?]":
+                    parts.append(t)
+    flush_cjk()
+
+    result = "".join(parts)
+    result = re.sub(r'([_\- ]){2,}', r'\1', result)
+    return result.strip("_- ")
+
+
+def scan_phase_7(
+    base_dir: Path,
+    only_new: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    file_cb: Optional[Callable[[str], None]] = None,
+    stop_event=None,
+) -> List[Finding]:
+    """Flag files with non-ASCII stems and suggest romanized alternatives."""
+    findings = []
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new))
+    total = len(all_files)
+    for i, path in enumerate(all_files):
+        if stop_event and stop_event.is_set():
+            break
+        if progress_cb and i % 50 == 0:
+            progress_cb(i, total)
+        if file_cb:
+            file_cb(str(path))
+        stem = path.stem
+        if stem.isascii():
+            continue
+        romanized = romanize_stem(stem)
+        if not romanized or romanized == stem:
+            continue
+        non_ascii = "".join(sorted(set(c for c in stem if not c.isascii())))
+        findings.append(Finding(
+            phase=7,
+            path=path,
+            reason=f"Non-ASCII: {non_ascii[:30]}",
+            current=path.name,
+            target=romanized,
+            extra={"non_ascii": non_ascii},
+        ))
+    if progress_cb:
+        progress_cb(total, total)
+    return findings
+
+
+def apply_phase_7(finding: Finding, new_name: str = "") -> bool:
+    """Rename file to its romanized stem (or a user-supplied name)."""
+    src = finding.path
+    name = (new_name or finding.target).strip()
+    if not name:
+        return False
+    if not name.endswith(src.suffix):
+        name += src.suffix
+    new_path = src.with_name(name)
+    if new_path.exists():
+        return False
+    try:
+        src.rename(new_path)
+        FolderMarkers.invalidate(src.parent)
+        return True
+    except OSError:
+        return False
+
+
+# ============================================================================
 # Report / Export
 # ============================================================================
 
