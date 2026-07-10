@@ -1365,18 +1365,20 @@ class SyncTab(QWidget):
     def _any_usb_mounted(self) -> bool:
         """Return True if any pair's USB mount point is accessible.
 
-        Walks up from the configured USB path until finding an ancestor that
-        exists, so a freshly mounted drive with no subfolders yet still
-        enables the buttons (apply_copy creates subfolders on first copy).
+        Walks up from the configured USB path to the mount point, but stops
+        before filesystem boundary dirs (/Volumes, /mnt, /media, /) so that
+        the always-present /Volumes directory does not count as "mounted".
         """
+        _BOUNDARIES = {Path("/"), Path("/Volumes"), Path("/mnt"), Path("/media")}
         for p in config.SYNC_PAIRS:
             candidate = Path(p["usb"])
             while not candidate.exists():
                 parent = candidate.parent
-                if parent == candidate:  # reached filesystem root
+                if parent == candidate or parent in _BOUNDARIES:
+                    candidate = None
                     break
                 candidate = parent
-            if candidate.exists() and str(candidate) != "/":
+            if candidate and candidate.exists() and candidate not in _BOUNDARIES:
                 return True
         return False
 
