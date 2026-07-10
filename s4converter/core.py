@@ -82,6 +82,7 @@ def iter_files(base_dir: Path, skip_clean_folders: bool = False,
         if folder_cb:
             folder_cb(str(root_path))
         if skip_clean_folders and FolderMarkers.is_folder_clean(root_path, extensions):
+            dirs.clear()  # don't recurse into subdirs of clean folders
             continue
         for name in files:
             if name == config.FOLDER_MARKER_NAME:
@@ -257,16 +258,28 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     """
     findings: List[Finding] = []
     all_exts  = config.NON_WAV_AUDIO_EXTS | {".wav"}
-    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts,
-                                folder_cb=file_cb))
-    if not candidates:
+    all_candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts,
+                                     folder_cb=file_cb))
+    if not all_candidates:
         return findings
 
     # Skip files already confirmed clean by a previous scan or apply.
     if cache is not None:
-        candidates = [p for p in candidates if not cache.is_phase_done(p, 1)]
-    if not candidates:
+        needs_probe = [p for p in all_candidates if not cache.is_phase_done(p, 1)]
+
+        # For folders where every candidate file is already phase-done, write a
+        # folder marker so that iter_files (with skip_clean_folders) skips them
+        # on the next scan entirely — avoiding 270k+ stat() calls on USB.
+        if len(needs_probe) < len(all_candidates):
+            probe_folders = {p.parent for p in needs_probe}
+            for folder in {p.parent for p in all_candidates} - probe_folders:
+                FolderMarkers.mark_folder(folder)
+    else:
+        needs_probe = all_candidates
+
+    if not needs_probe:
         return findings
+    candidates = needs_probe
 
     results   = parallel_ffprobe(candidates, cache, progress_cb, file_cb=file_cb, stop_event=stop_event)
     target_sr = int(config.FORCE_AR)

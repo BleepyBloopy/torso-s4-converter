@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import config
+from .cache import FolderMarkers
 
 AUDIO_EXTENSIONS = {
     ".wav", ".aiff", ".aif", ".mp3", ".flac", ".m4a", ".ogg", ".wma", ".alac",
@@ -303,6 +304,8 @@ def apply_copy(finding: SyncFinding, tracker: SyncTracker) -> bool:
 
     try:
         finding.usb_path.parent.mkdir(parents=True, exist_ok=True)
+        # Invalidate folder marker so the next Wav Format scan rechecks this folder.
+        FolderMarkers.invalidate(finding.usb_path.parent)
         suffix = finding.usb_path.suffix
         tmp = finding.usb_path.parent / (finding.usb_path.stem + ".__synctmp__" + suffix)
         shutil.copy2(finding.source_path, tmp)
