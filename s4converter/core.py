@@ -241,6 +241,23 @@ def check_drive_present(base_dir: Path) -> bool:
     return base_dir.exists() and base_dir.is_dir()
 
 
+def _propagate_ancestor_markers(base_dir: Path, seed_folders) -> None:
+    """Mark seed_folders and all their ancestors up to (not including) base_dir.
+
+    Writes/refreshes .s4_processed markers so that iter_files with
+    skip_clean_folders can fire dirs.clear() at the highest level possible,
+    making subsequent fast scans traverse only the folders that actually changed.
+    """
+    visited: set = set(seed_folders)
+    for folder in list(seed_folders):
+        FolderMarkers.mark_folder(folder)
+        parent = folder.parent
+        while parent != base_dir and parent not in visited:
+            FolderMarkers.mark_folder(parent)
+            visited.add(parent)
+            parent = parent.parent
+
+
 # ============================================================================
 # Phase 1: Format Normalization — non-WAV + wrong SR/bits in one scan
 # ============================================================================
@@ -258,9 +275,26 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
     """
     findings: List[Finding] = []
     all_exts  = config.NON_WAV_AUDIO_EXTS | {".wav"}
+
+    # Track every folder iter_files visits (folder_cb fires for both skipped-clean
+    # and actively-walked folders) so we can back-propagate markers up the ancestor
+    # chain even when all_candidates is empty (all leaf folders already marked).
+    _visited_folders: List[Path] = []
+
+    def _folder_cb(path: str) -> None:
+        _visited_folders.append(Path(path))
+        if file_cb:
+            file_cb(path)
+
     all_candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts,
-                                     folder_cb=file_cb))
+                                     folder_cb=_folder_cb))
+
     if not all_candidates:
+        # All leaf folders were already marked clean; iter_files skipped them all.
+        # Propagate markers up to the first level below base_dir so the next fast
+        # scan fires dirs.clear() at the top-level pair folders and returns in <1s.
+        if only_new and cache is not None and _visited_folders:
+            _propagate_ancestor_markers(base_dir, set(_visited_folders))
         return findings
 
     # Skip files already confirmed clean by a previous scan or apply.
@@ -272,8 +306,14 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
         # on the next scan entirely — avoiding 270k+ stat() calls on USB.
         if len(needs_probe) < len(all_candidates):
             probe_folders = {p.parent for p in needs_probe}
-            for folder in {p.parent for p in all_candidates} - probe_folders:
+            clean_folders = {p.parent for p in all_candidates} - probe_folders
+            for folder in clean_folders:
                 FolderMarkers.mark_folder(folder)
+
+            # If EVERYTHING was clean, also mark all ancestor folders up to
+            # base_dir so the next fast scan can skip from the root level.
+            if not needs_probe:
+                _propagate_ancestor_markers(base_dir, clean_folders)
     else:
         needs_probe = all_candidates
 

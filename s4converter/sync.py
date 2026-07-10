@@ -294,6 +294,26 @@ def scan_all(
 # Apply
 # ---------------------------------------------------------------------------
 
+def _invalidate_ancestors(folder: Path, pair_label: str) -> None:
+    """Remove markers from folder up to and including the sync pair USB root.
+
+    Ensures that a fast scan won't skip any intermediate folder on the path
+    to a newly-copied file, even if ancestor markers were written by a prior
+    all-clean scan.
+    """
+    pair_usb = next(
+        (Path(p["usb"]) for p in config.SYNC_PAIRS if p["label"] == pair_label),
+        None,
+    )
+    # Stop before the parent of pair_usb (i.e. the USB base dir) so we never
+    # invalidate the drive root itself.
+    stop_before = pair_usb.parent if pair_usb else None
+    current = folder
+    while current != stop_before and current != current.parent:
+        FolderMarkers.invalidate(current)
+        current = current.parent
+
+
 def apply_copy(finding: SyncFinding, tracker: SyncTracker) -> bool:
     """Copy source → USB (new/updated) or duplicate old USB → new USB (moved).
 
@@ -304,8 +324,9 @@ def apply_copy(finding: SyncFinding, tracker: SyncTracker) -> bool:
 
     try:
         finding.usb_path.parent.mkdir(parents=True, exist_ok=True)
-        # Invalidate folder marker so the next Wav Format scan rechecks this folder.
-        FolderMarkers.invalidate(finding.usb_path.parent)
+        # Invalidate the destination folder and all ancestor markers so the
+        # next fast scan rechecks every folder on the path to this new file.
+        _invalidate_ancestors(finding.usb_path.parent, finding.pair_label)
         suffix = finding.usb_path.suffix
         tmp = finding.usb_path.parent / (finding.usb_path.stem + ".__synctmp__" + suffix)
         shutil.copy2(finding.source_path, tmp)
@@ -339,6 +360,7 @@ def _apply_moved_duplicate(finding: SyncFinding, tracker: SyncTracker) -> bool:
 
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
+        _invalidate_ancestors(dst.parent, finding.pair_label)
         tmp = dst.parent / (dst.stem + ".__synctmp__" + dst.suffix)
         shutil.copy2(src, tmp)
         tmp.replace(dst)
