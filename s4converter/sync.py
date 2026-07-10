@@ -224,29 +224,38 @@ def scan_all(
     """Scan all configured sync pairs; return files that need attention."""
     all_findings: List[SyncFinding] = []
 
+    # Walk all pairs first so progress is reported across the full library,
+    # not reset to 0% at the start of each pair.
+    pair_data = []
     for pair in config.SYNC_PAIRS:
+        if stop_event and stop_event.is_set():
+            break
+        if not pair["source"].exists():
+            continue
+        source_files = _walk_source(pair["source"], stop_event)
+        pair_data.append((pair, source_files))
+
+    grand_total = sum(len(sf) for _, sf in pair_data)
+    done = 0
+
+    for pair, source_files in pair_data:
         if stop_event and stop_event.is_set():
             break
         label = pair["label"]
         source: Path = pair["source"]
         usb: Path = pair["usb"]
 
-        if not source.exists():
-            continue
-
-        source_files = _walk_source(source, stop_event)
-        total = len(source_files)
-
         new_or_updated: List[SyncFinding] = []
         deleted: List[SyncFinding] = []
 
-        for i, (rel, (mtime, size)) in enumerate(sorted(source_files.items())):
+        for rel, (mtime, size) in sorted(source_files.items()):
             if stop_event and stop_event.is_set():
                 return all_findings
             if file_cb:
                 file_cb(str(source / rel))
-            if progress_cb and total:
-                progress_cb(i + 1, total)
+            done += 1
+            if progress_cb and grand_total:
+                progress_cb(done, grand_total)
             if tracker.is_synced(label, rel, mtime, size):
                 continue
             prev = tracker._data.get(tracker._key(label, rel))
