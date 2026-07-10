@@ -571,6 +571,95 @@ def apply_phase_3(finding: Finding, new_name: str) -> bool:
 
 
 # ============================================================================
+# Phase 8: Single-child folder collapse
+# ============================================================================
+
+def scan_phase_8(
+    base_dir: Path,
+    only_new: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    file_cb: Optional[Callable[[str], None]] = None,
+    stop_event=None,
+) -> List[Finding]:
+    """Find folders that contain exactly one subfolder and nothing else.
+
+    These can be flattened: move the child's contents up one level and
+    delete the now-empty child folder. Findings are sorted deepest-first
+    so that nested collapses apply correctly in a single pass.
+    """
+    findings = []
+    folders: List[Path] = []
+    for root, dirs, _ in os.walk(base_dir):
+        dirs[:] = [d for d in dirs
+                   if d not in config.EXCLUDED_FOLDER_NAMES and not d.startswith(".")]
+        root_path = Path(root)
+        if root_path == base_dir:
+            continue  # never collapse into root
+        if only_new and FolderMarkers.is_folder_clean(root_path):
+            continue
+        folders.append(root_path)
+
+    total = len(folders)
+    for i, folder in enumerate(folders):
+        if stop_event and stop_event.is_set():
+            break
+        if progress_cb and i % 50 == 0:
+            progress_cb(i, total)
+        if file_cb:
+            file_cb(str(folder))
+        try:
+            visible = [e for e in folder.iterdir() if not is_hidden_or_appledouble(e)]
+        except OSError:
+            continue
+        if len(visible) != 1 or not visible[0].is_dir():
+            continue
+        child = visible[0]
+        try:
+            child_count = sum(1 for e in child.iterdir() if not is_hidden_or_appledouble(e))
+        except OSError:
+            continue
+        try:    loc = str(folder.relative_to(base_dir))
+        except: loc = str(folder)
+        findings.append(Finding(
+            phase=8,
+            path=folder,
+            reason=f"Contains only '{child.name}'",
+            current=loc,
+            target=loc,
+            extra={"child": child.name, "child_path": str(child), "child_count": child_count},
+        ))
+
+    findings.sort(key=lambda f: len(f.path.parts), reverse=True)
+    if progress_cb:
+        progress_cb(total, total)
+    return findings
+
+
+def apply_phase_8(finding: Finding) -> bool:
+    """Move all contents of the single child folder up into the parent, then delete child."""
+    parent = finding.path
+    child  = Path(finding.extra["child_path"])
+    if not parent.is_dir() or not child.is_dir():
+        return False
+    try:
+        for item in list(child.iterdir()):
+            if is_hidden_or_appledouble(item):
+                continue
+            dest = parent / item.name
+            if dest.exists():
+                return False
+            item.rename(dest)
+        for leftover in child.iterdir():
+            try: leftover.unlink()
+            except OSError: pass
+        child.rmdir()
+        FolderMarkers.invalidate(parent)
+        return True
+    except OSError:
+        return False
+
+
+# ============================================================================
 # Phase 4: Stereo → Mono detection
 # ============================================================================
 

@@ -728,7 +728,10 @@ class NamesTab(PhaseTab):
             "Strip shared prefixes, shorten long filenames, and romanize non-ASCII names. "
             "Edit values inline before applying.",
             help_text=(
-                "Three name-related cleanup passes:\n\n"
+                "Four name-related cleanup passes:\n\n"
+                "Collapse — finds folders that contain exactly one subfolder and nothing\n"
+                "  else. Moves the subfolder's contents up one level and deletes it.\n"
+                "  Example: Drums/Kicks/kick.wav → Drums/kick.wav\n\n"
                 "Prefix Removal — scans every subfolder for shared filename prefixes.\n"
                 "  Example: KickDrum_Tight.wav, KickDrum_Open.wav → Tight.wav, Open.wav\n"
                 f"  (min prefix: {config.MIN_PREFIX_LENGTH} chars, min group: {config.MIN_GROUP_SIZE} files)\n\n"
@@ -738,9 +741,9 @@ class NamesTab(PhaseTab):
                 "  Latin, Cyrillic, etc.) and suggests ASCII transliterations.\n"
                 "  Chinese → pinyin (e.g. 踢鼓 → tigu), accented → stripped accent (é → e).\n"
                 "  Edit the suggested name in the New Name column before applying.\n\n"
-                "Prefix rows have two columns:\n"
+                "Prefix rows have two editable columns:\n"
                 "  • Detected Prefix — the shared prefix the scan found; double-click to edit\n"
-                "  • New prefix (opt.) — if non-empty, prepended to each file after stripping\n"
+                "  • New Name (opt.) — if non-empty, prepended to each file after stripping\n"
                 "    e.g. type 'Caribou140-' to rename 'Prefix_Kick.wav' → 'Caribou140-Kick.wav'\n\n"
                 "Long Name / Non-ASCII rows: edit the New Name column to set the new filename.\n\n"
                 "Tip: run prefix removal first — stripping a prefix often brings names "
@@ -765,6 +768,12 @@ class NamesTab(PhaseTab):
             try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path.parent)
             return ["Non-ASCII", f.current, f.reason, "", f.target]
+        elif f.phase == 8:
+            child = f.extra.get("child", "")
+            count = f.extra.get("child_count", 0)
+            try:    loc = str(f.path.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path)
+            return ["Collapse", loc, f"Only '{child}' ({count} items)", "", ""]
         else:
             suggestions = f.extra.get("suggestions", [])
             suggested   = suggestions[0] if suggestions else ""
@@ -777,7 +786,9 @@ class NamesTab(PhaseTab):
         only_new = self.main_window.only_new
         cache    = self.main_window.cache
         def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
-            findings = core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event, cache=cache)
+            findings = core.scan_phase_8(base_dir, only_new, progress_cb, file_cb, stop_event)
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event, cache=cache)
             if not (stop_event and stop_event.is_set()):
                 findings += core.scan_phase_3(base_dir, only_new, progress_cb, file_cb, stop_event)
             if not (stop_event and stop_event.is_set()):
@@ -821,6 +832,8 @@ class NamesTab(PhaseTab):
                 return bool(result)
             if finding.phase == 7:
                 return core.apply_phase_7(finding, override)
+            if finding.phase == 8:
+                return core.apply_phase_8(finding)
             return core.apply_phase_3(finding, override)
 
         self.main_window.set_busy(True)

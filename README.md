@@ -1,4 +1,4 @@
-# Torso S-4 Smart Sample Converter v7.8
+# Torso S-4 Smart Sample Converter v7.9
 
 Standardize, organize, and sync audio sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
@@ -130,7 +130,9 @@ Multiple filters prevent false positives on one-shots and recordings:
 **High-confidence detections (≥ 0.75) are checked by default.** Medium and low confidence results are shown but unchecked — review before selecting.
 
 ### Tab 3 — Name
-Three passes in one tab:
+Four passes in one tab:
+
+**Folder Collapse** — finds folders that contain exactly one subfolder and nothing else, and moves the subfolder's contents up one level. Example: `Drums/Kicks/kick.wav` → `Drums/kick.wav` (empty `Kicks/` folder is deleted). Sorted deepest-first so nested collapses work in a single pass.
 
 **Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
 Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.

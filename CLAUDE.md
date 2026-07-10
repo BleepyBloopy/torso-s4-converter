@@ -51,11 +51,11 @@ s4converter/
 | 0 | Sync | Copies new/changed Mac source files to USB; move detection; never auto-deletes from USB |
 | 1 | Wav Format | Converts non-WAV audio + wrong-SR/bit-depth WAVs → 48 kHz 16-bit WAV in one pass |
 | 2 | Silence Remover | Trims leading/trailing silence (scan_phase_5 / apply_phase_5) |
-| 3 | Name | Prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) + non-ASCII romanization (scan_phase_7) combined |
+| 3 | Name | Folder collapse (scan_phase_8) + prefix removal (scan_phase_2_all) + long filename cleanup (scan_phase_3) + non-ASCII romanization (scan_phase_7) combined |
 | 4 | Fake Stereo to Mono | Converts fake-stereo to mono (scan_phase_4 / apply_phase_4); has Loose mode checkbox |
 | 5 | BPM | BPM detection via `aubio`, renames with `{bpm}bpm_` prefix; also finds bare-number files missing the 'bpm' label (`scan_bpm_relabel`) |
 
-Tab 0 (Sync) is always enabled even before loading a drive. Tabs 1–5 require a drive to be loaded. Internal phase numbers (used in `Finding.phase` and core functions) are 1–7 (phase 7 lives in the Name tab alongside phases 2 and 3).
+Tab 0 (Sync) is always enabled even before loading a drive. Tabs 1–5 require a drive to be loaded. Internal phase numbers (used in `Finding.phase` and core functions) are 1–8 (phases 2, 3, 7, 8 all live in the Name tab).
 
 ## Core patterns
 

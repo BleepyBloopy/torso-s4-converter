@@ -2,6 +2,13 @@
 
 ---
 
+## [v7.9] – 2026-07-09
+
+### Added
+- **Folder Collapse in Tab 3 (Name)** — new `scan_phase_8` finds folders that contain exactly one subfolder and nothing else. Suggests collapsing: move the child's contents up one level and delete the empty intermediate folder (e.g. `Drums/Kicks/kick.wav` → `Drums/kick.wav`). Findings are sorted deepest-first so nested collapse chains (`A/B/C/`) are fully flattened in one Apply pass without re-scanning.
+
+---
+
 ## [v7.8] – 2026-07-09
 
 ### Changed
