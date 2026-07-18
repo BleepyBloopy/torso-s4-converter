@@ -7,6 +7,9 @@ Phase layout:
     4  Stereo → Mono         — dual-mono / one-sided / near-mono detection
     5  Silence Removal       — trim leading / trailing silence
     6  BPM Detection         — detect BPM for rhythmic content, optionally rename
+    7  Non-ASCII Rename      — romanize non-ASCII filenames
+    8  Folder Collapse       — flatten single-child folder layers
+    9  Junk File Deletion    — remove DAW-specific / unreadable file types
 """
 
 import csv
@@ -51,6 +54,39 @@ class Finding:
     suggested_name: str = ""
     extra: dict = field(default_factory=dict)
     selected: bool = True
+
+
+# ============================================================================
+# Junk file extensions — DAW-specific, sampler-specific, or unreadable
+# ============================================================================
+
+JUNK_EXTENSIONS: frozenset = frozenset({
+    ".exs",   # Logic EXS24 sampler
+    ".nki",   # Kontakt instrument
+    ".nkm",   # Kontakt multiscript
+    ".nkr",   # Kontakt resource
+    ".sxt",   # Reason NN-XT patch
+    ".sfz",   # SFZ sampler
+    ".adg",   # Ableton device rack
+    ".rx2",   # ReCycle REX2 loop
+    ".dwp",   # Maschine project
+    ".asd",   # Ableton analysis sidecar
+    ".fst",   # FL Studio plugin state
+    ".agr",   # Groove pool entry
+    ".ncw",   # NI Compressed WAV (can't be decoded by ffmpeg)
+    ".mid",   # MIDI (not audio)
+    ".midi",  # MIDI variant
+    ".mxgrp", # Maschine group
+    ".nbkt",  # Maschine template
+    ".snd",   # Generic sound file (often proprietary)
+    ".mp4",   # Video (instruction videos in Docs/)
+    ".kong",  # Reason Kong patch
+    ".pgm",   # MPC program file
+    ".patch", # Various sampler patch formats
+    ".als",   # Ableton Live Set (references audio, doesn't embed it)
+    ".cfg",   # Generic config
+    ".xpm",   # MPC program
+})
 
 
 # ============================================================================
@@ -727,6 +763,94 @@ def apply_phase_8(finding: Finding) -> bool:
         return True
     except OSError:
         return False
+
+
+# ============================================================================
+# Phase 9: Junk file deletion
+# ============================================================================
+
+def scan_junk_files(
+    base_dir: Path,
+    only_new: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    file_cb: Optional[Callable[[str], None]] = None,
+    stop_event=None,
+) -> List[Finding]:
+    """Find files with extensions in JUNK_EXTENSIONS."""
+    findings = []
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new,
+                                extensions=JUNK_EXTENSIONS))
+    total = len(all_files)
+    for i, path in enumerate(all_files):
+        if stop_event and stop_event.is_set():
+            break
+        if progress_cb and i % 100 == 0:
+            progress_cb(i, total)
+        if file_cb:
+            file_cb(str(path))
+        if path.suffix.lower() in JUNK_EXTENSIONS:
+            findings.append(Finding(
+                phase=9, path=path,
+                reason=f"Junk file type ({path.suffix.lower()})",
+                current=path.name,
+                target="",
+                extra={"ext": path.suffix.lower()},
+            ))
+    if progress_cb:
+        progress_cb(total, total)
+    return findings
+
+
+def apply_delete_junk(finding: Finding) -> bool:
+    """Delete a junk file and invalidate its folder's marker."""
+    try:
+        finding.path.unlink()
+        FolderMarkers.invalidate(finding.path.parent)
+        return True
+    except OSError:
+        return False
+
+
+def cascade_cleanup(base_dir: Path) -> Tuple[int, int]:
+    """After deleting junk files, clean up the tree:
+    1. Delete newly-empty folders (bottom-up).
+    2. Flatten any single-child folders that appeared after deletions.
+    Returns (empty_folders_deleted, folders_flattened).
+    """
+    empty_deleted = 0
+    for root, dirs, files in os.walk(base_dir, topdown=False):
+        root_path = Path(root)
+        if root_path == base_dir:
+            continue
+        if is_hidden_or_appledouble(root_path):
+            continue
+        try:
+            visible = [
+                p for p in root_path.iterdir()
+                if not is_hidden_or_appledouble(p)
+                and p.name not in config.EXCLUDED_FOLDER_NAMES
+            ]
+            if not visible:
+                # Delete hidden leftover files first, then rmdir.
+                for p in root_path.iterdir():
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+                root_path.rmdir()
+                FolderMarkers.invalidate(root_path.parent)
+                empty_deleted += 1
+        except OSError:
+            pass
+
+    # Flatten single-child folder layers (phase 8 logic).
+    flattened = 0
+    candidates = scan_phase_8(base_dir, only_new=False)
+    for finding in candidates:
+        if apply_phase_8(finding):
+            flattened += 1
+
+    return empty_deleted, flattened
 
 
 # ============================================================================
