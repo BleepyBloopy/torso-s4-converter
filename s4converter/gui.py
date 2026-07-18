@@ -443,7 +443,7 @@ class PhaseTab(QWidget):
     def apply_fn(self):
         raise NotImplementedError
 
-    def start_scan(self):
+    def start_scan(self, phase_label: str = ""):
         if not self.main_window.check_base_dir():
             return
 
@@ -454,7 +454,7 @@ class PhaseTab(QWidget):
         self._status.setVisible(True)
         self._current_file_label.setVisible(True)
         self.stop_btn.setVisible(True)
-        self.count_label.setText("Scanning…")
+        self.count_label.setText(phase_label or "Scanning…")
         self._render_status()
         self.main_window.log(f"[{self.title}] Scanning...")
 
@@ -499,6 +499,11 @@ class PhaseTab(QWidget):
         self.main_window.log(
             f"[{self.title}] Scan complete: {len(findings)} findings."
         )
+        if n == 0:
+            msg = "0 findings — nothing to do in this pass."
+        else:
+            msg = f"{n} finding{'s' if n != 1 else ''} — review the table and apply as needed."
+        QMessageBox.information(self, f"{self.title} — Scan Complete", msg)
 
     def on_scan_stopped(self):
         self.progress.setVisible(False)
@@ -753,10 +758,36 @@ class NamesTab(PhaseTab):
         )
 
     def build_table(self):
-        return FindingsTable(
-            ["Type", "File / Folder", "Detail", "Detected Prefix", "New Name (opt.)"],
+        table = FindingsTable(
+            ["Type", "File / Folder", "Detail", "Detected Prefix", "New Name (opt.)", "📂"],
             editable_cols=[4, 5],
         )
+        # 📂 column (index 6) is narrow and fixed — never stretched or auto-resized.
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(
+            6, QHeaderView.ResizeMode.Fixed
+        )
+        table.setColumnWidth(6, 36)
+        return table
+
+    def on_scan_done(self, findings):
+        super().on_scan_done(findings)
+        self._add_reveal_buttons()
+
+    def _add_reveal_buttons(self):
+        import subprocess as _sp
+        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
+        for row in range(displayed):
+            f = self.findings[row]
+            reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
+            btn = QPushButton("📂")
+            btn.setFlat(True)
+            btn.setFixedSize(32, 24)
+            btn.setToolTip(reveal_path)
+            btn.clicked.connect(
+                lambda checked=False, p=reveal_path: _sp.Popen(["open", "-R", p])
+            )
+            self.table.setCellWidget(row, 6, btn)
 
     def row_builder(self, f):
         if f.phase == 2:
@@ -764,36 +795,49 @@ class NamesTab(PhaseTab):
             affected = len(f.extra.get("affected_files", []))
             try:    loc = str(f.path.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path)
-            return ["Prefix", loc, f"{affected} files", prefix, ""]
+            return ["Prefix", loc, f"{affected} files", prefix, "", ""]
         elif f.phase == 7:
             try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path.parent)
-            return ["Non-ASCII", f.current, f.reason, "", f.target]
+            return ["Non-ASCII", f.current, f.reason, "", f.target, ""]
         elif f.phase == 8:
             child = f.extra.get("child", "")
             count = f.extra.get("child_count", 0)
             try:    loc = str(f.path.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path)
-            return ["Collapse", loc, f"Only '{child}' ({count} items)", "", ""]
+            return ["Collapse", loc, f"Move '{child}' ({count} items) up — remove this layer", "", "", ""]
         else:
             suggestions = f.extra.get("suggestions", [])
             suggested   = suggestions[0] if suggestions else ""
             try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path.parent)
-            return ["Long Name", f.current, f.reason, "", suggested]
+            return ["Long Name", f.current, f.reason, "", suggested, ""]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
         only_new = self.main_window.only_new
         cache    = self.main_window.cache
         def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
-            findings = core.scan_phase_8(base_dir, only_new, progress_cb, file_cb, stop_event)
+            # Each sub-phase would normally reset progress 0→100%.  Instead, map each
+            # phase into a quarter of [0, 400] so the bar moves continuously.
+            n_phases = 4
+            phase_idx = [0]
+
+            def phase_cb(done, total):
+                if progress_cb and total > 0:
+                    progress_cb(phase_idx[0] * total + done, n_phases * total)
+
+            cb = phase_cb if progress_cb else None
+            findings = core.scan_phase_8(base_dir, only_new, cb, file_cb, stop_event)
+            phase_idx[0] = 1
             if not (stop_event and stop_event.is_set()):
-                findings += core.scan_phase_2_all(base_dir, only_new, progress_cb, file_cb, stop_event, cache=cache)
+                findings += core.scan_phase_2_all(base_dir, only_new, cb, file_cb, stop_event, cache=cache)
+            phase_idx[0] = 2
             if not (stop_event and stop_event.is_set()):
-                findings += core.scan_phase_3(base_dir, only_new, progress_cb, file_cb, stop_event)
+                findings += core.scan_phase_3(base_dir, only_new, cb, file_cb, stop_event)
+            phase_idx[0] = 3
             if not (stop_event and stop_event.is_set()):
-                findings += core.scan_phase_7(base_dir, only_new, progress_cb, file_cb, stop_event)
+                findings += core.scan_phase_7(base_dir, only_new, cb, file_cb, stop_event)
             return findings
         return (combined, (base, only_new))
 
@@ -1456,13 +1500,14 @@ class SyncTab(QWidget):
             return
         self._start_scan_worker(on_done=self._on_scan_done)
 
-    def _start_scan_worker(self, on_done) -> None:
+    def _start_scan_worker(self, on_done, label: str = "Scanning…") -> None:
         tracker = self.main_window.sync_tracker
 
         def scan_fn(tracker, progress_cb=None, file_cb=None, stop_event=None):
             return sync.scan_all(tracker, progress_cb, file_cb, stop_event)
 
-        self._set_running(True, "Scanning…")
+        self._set_running(True, label)
+        self.progress.setValue(0)
         self.thread = QThread()
         self.worker = ScanWorker(scan_fn, tracker)
         self.worker.moveToThread(self.thread)
@@ -1489,6 +1534,11 @@ class SyncTab(QWidget):
         self.apply_btn.setEnabled(bool(findings))
         self._refresh_pair_labels()
         self.main_window.log(f"[Sync] Scan complete: {n} findings.")
+        if n == 0:
+            msg = "0 findings — already up to date."
+        else:
+            msg = f"{n} finding{'s' if n != 1 else ''} — review the table and copy as needed."
+        QMessageBox.information(self, "Sync — Scan Complete", msg)
 
     def _color_status_cells(self) -> None:
         """Color the Status column cells by status type."""
@@ -1535,7 +1585,11 @@ class SyncTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._run_copy_worker(selected, on_done=self._on_copy_done)
+        def on_copy_done(ok: int, fail: int, duplicated: list) -> None:
+            self._remove_copied_findings(selected)
+            self._on_copy_done(ok, fail, duplicated)
+
+        self._run_copy_worker(selected, on_done=on_copy_done)
 
     def _run_copy_worker(self, findings: list, on_done) -> None:
         tracker = self.main_window.sync_tracker
@@ -1602,6 +1656,16 @@ class SyncTab(QWidget):
         self._refresh_pair_labels()
         self.main_window.log(f"[Sync] Copy stopped. {ok} succeeded, {fail} failed.")
 
+    def _remove_copied_findings(self, submitted: list) -> None:
+        """Remove submitted findings from the table after a copy completes."""
+        submitted_ids = {id(f) for f in submitted}
+        self.findings = [f for f in self.findings if id(f) not in submitted_ids]
+        self.table.set_findings(self.findings, self._row_builder)
+        self._color_status_cells()
+        n = len(self.findings)
+        self.count_label.setText(f"{n} findings" if n else "0 findings")
+        self.apply_btn.setEnabled(bool(self.findings))
+
     # ------------------------------------------------------------------
     # Sync + Convert (chained operation)
     # ------------------------------------------------------------------
@@ -1624,10 +1688,6 @@ class SyncTab(QWidget):
 
             if not to_copy and not n_del:
                 self.main_window.log("[Sync] Nothing to sync — already up to date.")
-                QMessageBox.information(
-                    self, "Already Up to Date",
-                    "No new or changed files found. Switching to Wav Format tab."
-                )
                 self._switch_to_phase1()
                 return
 
@@ -1645,21 +1705,24 @@ class SyncTab(QWidget):
                 return
 
             def after_copy(ok: int, fail: int, duplicated: list) -> None:
+                self._remove_copied_findings(to_copy)
                 self._on_copy_done(ok, fail, duplicated)
                 self.main_window.log("[Sync+Convert] Sync done — switching to Wav Format tab.")
                 self._switch_to_phase1()
 
+            self._set_running(True, "1/2 Copying…")
             self._run_copy_worker(to_copy, on_done=after_copy)
 
-        self._start_scan_worker(on_done=after_scan)
+        self._start_scan_worker(on_done=after_scan, label="1/2 Syncing…")
 
     def _switch_to_phase1(self) -> None:
         """Switch to the Wav Format tab and auto-start its scan."""
+        self.count_label.setText("2/2 Scanning format…")
         tabs = self.main_window.tabs
         for i in range(tabs.count()):
             if isinstance(tabs.widget(i), Phase1Tab):
                 tabs.setCurrentIndex(i)
-                tabs.widget(i).start_scan()
+                tabs.widget(i).start_scan(phase_label="2/2 Scanning format…")
                 return
 
     # ------------------------------------------------------------------
