@@ -1960,7 +1960,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(FileCleanupTab(self),  "4. File Cleanup")
         self.tabs.addTab(NameCleanupTab(self),  "5. Name Cleanup")
         self.tabs.addTab(StereoMonoTab(self),   "6. Fake Stereo to Mono")
-        self.tabs.addTab(Phase6Tab(self),       "7. BPM")
+        self.tabs.addTab(Phase6Tab(self),       "7. BPM Detection")
         # SyncTab (index 0) is always enabled; processing tabs need a loaded drive
         for i in range(1, self.tabs.count()):
             self.tabs.setTabEnabled(i, False)
