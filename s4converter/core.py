@@ -778,7 +778,9 @@ def scan_junk_files(
 ) -> List[Finding]:
     """Find files with extensions in JUNK_EXTENSIONS."""
     findings = []
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new,
+    # Never skip folders for junk scanning — folder markers are shared across phases
+    # so a folder "cleaned" by Wav Format would otherwise hide junk files inside it.
+    all_files = list(iter_files(base_dir, skip_clean_folders=False,
                                 extensions=JUNK_EXTENSIONS))
     total = len(all_files)
     for i, path in enumerate(all_files):
