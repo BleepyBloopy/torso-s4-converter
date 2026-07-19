@@ -757,7 +757,7 @@ class FileCleanupTab(PhaseTab):
         )
 
     def build_table(self):
-        table = FindingsTable(["Open Folder", "Type", "File / Folder", "Detail"])
+        table = FindingsTable(["Open Folder", "Type", "File / Folder", "Detail", "Size"])
         table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Fixed
@@ -790,15 +790,16 @@ class FileCleanupTab(PhaseTab):
     def row_builder(self, f):
         if f.phase == 9:
             ext = f.extra.get("ext", f.path.suffix.lower())
-            try:    loc = str(f.path.parent.relative_to(self.main_window.base_dir))
-            except ValueError: loc = str(f.path.parent)
-            return ["", "Junk", f.path.name, ext]
+            try:    loc = str(f.path.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path)
+            size = core.format_bytes(f.savings_bytes) if f.savings_bytes else "—"
+            return ["", "Junk", loc, ext, size]
         else:
             child = f.extra.get("child", "")
             count = f.extra.get("child_count", 0)
             try:    loc = str(f.path.relative_to(self.main_window.base_dir))
             except ValueError: loc = str(f.path)
-            return ["", "Collapse", loc, f"Move '{child}' ({count} items) up — remove this layer"]
+            return ["", "Collapse", loc, f"Move '{child}' ({count} items) up — remove this layer", ""]
 
     def scan_fn(self):
         base     = self.main_window.base_dir

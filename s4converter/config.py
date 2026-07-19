@@ -121,4 +121,4 @@ EXCLUDED_FOLDER_NAMES = {
     ".TemporaryItems", "$RECYCLE.BIN",
 }
 
-NON_WAV_AUDIO_EXTS = {".mp3", ".aiff", ".aif", ".flac", ".m4a", ".ogg", ".wma", ".alac"}
+NON_WAV_AUDIO_EXTS = {".mp3", ".aiff", ".aif", ".flac", ".m4a", ".ogg", ".wma", ".alac", ".mp4"}

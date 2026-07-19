@@ -79,7 +79,6 @@ JUNK_EXTENSIONS: frozenset = frozenset({
     ".mxgrp", # Maschine group
     ".nbkt",  # Maschine template
     ".snd",   # Generic sound file (often proprietary)
-    ".mp4",   # Video (instruction videos in Docs/)
     ".kong",  # Reason Kong patch
     ".pgm",   # MPC program file
     ".patch", # Various sampler patch formats
@@ -791,11 +790,16 @@ def scan_junk_files(
         if file_cb:
             file_cb(str(path))
         if path.suffix.lower() in JUNK_EXTENSIONS:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
             findings.append(Finding(
                 phase=9, path=path,
                 reason=f"Junk file type ({path.suffix.lower()})",
                 current=path.name,
                 target="",
+                savings_bytes=size,
                 extra={"ext": path.suffix.lower()},
             ))
     if progress_cb:
