@@ -696,13 +696,16 @@ class Phase1Tab(PhaseTab):
             "→ 16-bit 48 kHz WAV in one pass.",
             help_text=(
                 "Scans your entire sample library for two classes of audio problems:\n\n"
-                "1. Non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC …)\n"
+                "1. Non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC, MP4 …)\n"
                 "   → Converts to WAV. Original deleted if delete_original=true in config.json.\n\n"
                 "2. WAV files at the wrong sample rate or bit depth\n"
                 "   → Re-encodes in place. No copy is made.\n\n"
                 "Target always: 48 000 Hz, 16-bit PCM (pcm_s16le).\n"
                 "Files already at 48 kHz AND 16-bit WAV are skipped entirely.\n\n"
-                "The 'Issue' column shows what is wrong with each file."
+                "The 'Issue' column shows what is wrong with each file.\n\n"
+                "Tip: if you recently added MP4 or another new format and Fast scan\n"
+                "is on, uncheck Fast scan once so every folder gets a fresh walk.\n"
+                "After that first full pass, Fast scan is safe to re-enable."
             ),
         )
 
