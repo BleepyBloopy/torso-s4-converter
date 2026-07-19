@@ -65,6 +65,7 @@ COPY_METADATA   = True
 
 # --- Renaming ---
 NAME_LENGTH_LIMIT  = int(_u.get("name_length_limit", 70))
+S4_DISPLAY_LIMIT   = int(_u.get("s4_display_limit", 49))   # max chars S4 shows per filename
 MIN_PREFIX_LENGTH  = 8
 MIN_GROUP_SIZE     = 3
 PREFIX_SKIP_LENGTH = 30

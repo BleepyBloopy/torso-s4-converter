@@ -601,6 +601,80 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
     return findings
 
 
+def scan_long_prefix(
+    base_dir: Path,
+    only_new: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    file_cb: Optional[Callable[[str], None]] = None,
+    stop_event=None,
+) -> List[Finding]:
+    """Find folders where files exceed S4_DISPLAY_LIMIT and share a prefix that can be stripped."""
+    folders: List[Path] = []
+    for root, dirs, _ in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
+                   and not d.startswith(".")]
+        folders.append(Path(root))
+
+    findings: List[Finding] = []
+    total = len(folders)
+    for i, folder in enumerate(folders, 1):
+        if stop_event and stop_event.is_set():
+            break
+        if progress_cb and i % 50 == 0:
+            progress_cb(i, total)
+        if file_cb:
+            file_cb(str(folder))
+
+        try:
+            all_files = [
+                f for f in folder.iterdir()
+                if f.is_file() and not is_hidden_or_appledouble(f)
+                and f.name != config.FOLDER_MARKER_NAME
+            ]
+        except OSError:
+            continue
+
+        if len(all_files) < config.MIN_GROUP_SIZE:
+            continue
+
+        long_files = [f for f in all_files if len(f.name) > config.S4_DISPLAY_LIMIT]
+        if not long_files:
+            continue
+
+        file_names = sorted([f.name for f in all_files])
+        prefix = detect_common_prefix(file_names)
+        if not prefix:
+            continue
+
+        # At least one long file must start with the prefix and have content after it.
+        benefiting = [
+            f for f in long_files
+            if f.name.startswith(prefix) and len(f.name) - len(prefix) > len(f.suffix)
+        ]
+        if not benefiting:
+            continue
+
+        n_long = len(long_files)
+        n_total = len(all_files)
+        findings.append(Finding(
+            phase=2, path=folder,
+            reason=f"{n_long} of {n_total} files exceed S4 display limit",
+            current=prefix,
+            target="",
+            extra={
+                "prefix": prefix,
+                "affected_files": [str(f) for f in all_files if f.name.startswith(prefix)],
+                "n_long": n_long,
+                "n_total": n_total,
+                "type": "long_prefix",
+            },
+        ))
+
+    if progress_cb:
+        progress_cb(total, total)
+    return findings
+
+
 # ============================================================================
 # Phase 3: Long filename cleanup
 # ============================================================================

@@ -857,33 +857,38 @@ class FileCleanupTab(PhaseTab):
 
 
 class NameCleanupTab(PhaseTab):
-    """Tab 5 — BPM relabeling + Non-ASCII romanization."""
+    """Tab 5 — Long prefix removal, BPM relabeling, Non-ASCII romanization."""
 
     def __init__(self, main_window):
         super().__init__(
             main_window, 7, "Name Cleanup",
-            "Add missing 'bpm' labels to numeric prefixes and romanize non-ASCII filenames. "
-            "Edit values inline before applying.",
+            "Strip long shared prefixes, add missing 'bpm' labels, and romanize non-ASCII filenames.",
             help_text=(
-                "Two name-related passes:\n\n"
+                f"Three name-related passes:\n\n"
+                f"Long Prefix — finds folders where files exceed the S-4's display limit\n"
+                f"  ({config.S4_DISPLAY_LIMIT} chars). Detects the shared prefix among all files\n"
+                f"  in that folder and offers to strip it, bringing long names under the limit.\n"
+                f"  Example: 'Lurka - Lurka Sample Pack - 18 LurkaKick.wav'\n"
+                f"    prefix detected: 'Lurka - Lurka Sample Pack - '\n"
+                f"    result: '18 LurkaKick.wav'\n"
+                f"  Edit the 'Edit' column to correct the detected prefix before applying.\n\n"
                 "BPM Relabel — finds WAV files whose names start with a bare number\n"
                 "  that looks like a BPM but is missing the 'bpm' label.\n"
-                "  Example: '120_kick.wav' → '120bpm_kick.wav'\n"
-                "  Files already containing '120bpm' or similar are skipped.\n\n"
-                "Non-ASCII — finds filenames containing non-English characters\n"
-                "  (Chinese, Japanese, Korean, accented Latin, Cyrillic, etc.)\n"
-                "  and suggests ASCII transliterations so the S-4 can read them:\n"
-                "  • Chinese → pinyin without tones (e.g. 踢鼓 → tigu)\n"
-                "  • Accented Latin → stripped accent (e.g. Café → Cafe)\n"
-                "  • Other scripts → best-effort ASCII via unidecode\n\n"
-                "Edit the 'New Name' column to customise the suggested name before applying."
+                "  Example: '120_kick.wav' → '120bpm_kick.wav'\n\n"
+                "Non-ASCII — finds filenames with non-English characters and suggests\n"
+                "  ASCII transliterations so the S-4 can read them:\n"
+                "  • Chinese → pinyin (e.g. 踢鼓 → tigu)\n"
+                "  • Accented Latin → stripped accent (e.g. Café → Cafe)\n\n"
+                "Edit the 'Edit' column to customise any value before applying.\n"
+                "For Long Prefix rows, the edit field holds the prefix to strip.\n"
+                "For BPM / Non-ASCII rows, it holds the full new filename."
             ),
         )
 
     def build_table(self):
         table = FindingsTable(
-            ["Open Folder", "Type", "File", "New Name (editable)"],
-            editable_col=4,
+            ["Open Folder", "Type", "File / Folder", "Detail", "Edit"],
+            editable_col=5,
         )
         table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(
@@ -891,7 +896,7 @@ class NameCleanupTab(PhaseTab):
         )
         table.setColumnWidth(1, 36)
         table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch
+            3, QHeaderView.ResizeMode.Stretch
         )
         return table
 
@@ -904,7 +909,7 @@ class NameCleanupTab(PhaseTab):
         displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
         for row in range(displayed):
             f = self.findings[row]
-            reveal_path = str(f.path.parent)
+            reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
             btn = QPushButton("📂")
             btn.setFlat(True)
             btn.setFixedSize(32, 24)
@@ -915,17 +920,26 @@ class NameCleanupTab(PhaseTab):
             self.table.setCellWidget(row, 1, btn)
 
     def row_builder(self, f):
-        if f.phase == 6:
-            return ["", "BPM Relabel", f.current, f.target]
+        if f.phase == 2:
+            prefix = f.extra.get("prefix", f.current)
+            n_long = f.extra.get("n_long", 0)
+            n_total = f.extra.get("n_total", 0)
+            try:    loc = str(f.path.relative_to(self.main_window.base_dir))
+            except ValueError: loc = str(f.path)
+            return ["", "Long Prefix", loc,
+                    f"{n_long} of {n_total} files too long — strip prefix",
+                    prefix]
+        elif f.phase == 6:
+            return ["", "BPM Relabel", f.current, f"→ {f.target}", f.target]
         else:
-            return ["", "Non-ASCII", f.current, f.target]
+            return ["", "Non-ASCII", f.current, f"→ {f.target}", f.target]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
         only_new = self.main_window.only_new
 
         def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
-            n_phases = 2
+            n_phases = 3
             phase_idx = [0]
 
             def phase_cb(done, total):
@@ -933,27 +947,74 @@ class NameCleanupTab(PhaseTab):
                     progress_cb(phase_idx[0] * total + done, n_phases * total)
 
             cb = phase_cb if progress_cb else None
-            findings = core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event)
+            findings = core.scan_long_prefix(base_dir, only_new, cb, file_cb, stop_event)
             phase_idx[0] = 1
+            if not (stop_event and stop_event.is_set()):
+                findings += core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event)
+            phase_idx[0] = 2
             if not (stop_event and stop_event.is_set()):
                 findings += core.scan_phase_7(base_dir, only_new, cb, file_cb, stop_event)
             return findings
 
         return (combined, (base, only_new))
 
-    def get_apply_extra(self, selected):
-        new_names = {}
-        for f in selected:
-            edited = self.table.get_edit_value(f)
-            new_names[id(f)] = edited if edited else f.target
-        return {"new_names": new_names}
+    def start_apply(self):
+        selected = self.table.get_selected_findings()
+        if not selected:
+            QMessageBox.information(self, "Nothing Selected", "No items are checked.")
+            return
+        reply = QMessageBox.question(
+            self, "Confirm",
+            f"Apply changes to {len(selected)} items?\n\nThis is not reversible.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Build edit-value map: col 5 holds prefix (phase 2) or new name (phases 6/7).
+        edit_map = {id(f): self.table.get_edit_value(f) for f in selected}
+        log   = self.main_window.log
+        cache = self.main_window.cache
+
+        def apply_fn(finding):
+            edited = edit_map.get(id(finding), "").strip()
+            if finding.phase == 2:
+                return bool(core.apply_phase_2(
+                    finding,
+                    override_prefix=edited or None,
+                    cache=cache,
+                    log_cb=lambda msg: log(f"[{self.title}] {msg}"),
+                ))
+            if finding.phase == 6:
+                return core.apply_phase_6(finding, edited)
+            return core.apply_phase_7(finding, edited)
+
+        self.main_window.set_busy(True)
+        self._applying = True
+        self.progress.setVisible(True)
+        self.progress.setMaximum(len(selected))
+        self.progress.setValue(0)
+        self._current_file_label.setText("")
+        self._current_file_label.setVisible(True)
+        self.stop_btn.setVisible(True)
+        self.count_label.setText(f"0 / {len(selected):,} items")
+        self.main_window.log(f"[{self.title}] Applying to {len(selected)} items...")
+        self.thread = QThread()
+        self.worker = ApplyWorker(apply_fn, selected, cache=self.main_window.cache)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.on_progress)
+        self.worker.current_file.connect(self._on_apply_file)
+        self.worker.finished.connect(self.on_apply_done)
+        self.worker.stopped.connect(self.on_apply_stopped)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.stopped.connect(self.thread.quit)
+        self.worker.error.connect(self.thread.quit)
+        self.thread.start()
 
     def apply_fn(self):
-        def dispatch(finding, new_name=""):
-            if finding.phase == 6:
-                return core.apply_phase_6(finding, new_name)
-            return core.apply_phase_7(finding, new_name)
-        return dispatch
+        pass  # overridden by start_apply
 
 
 # ============================================================================
