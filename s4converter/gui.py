@@ -668,6 +668,18 @@ class PhaseTab(QWidget):
     def _show_help(self):
         QMessageBox.information(self, self.title, self._help_text)
 
+    def _file_cols(self, f: "core.Finding"):
+        """Return (folder_rel, filename, size_str) for a finding."""
+        try:
+            folder = str(f.path.parent.relative_to(self.main_window.base_dir))
+        except (ValueError, AttributeError):
+            folder = str(f.path.parent)
+        try:
+            size = core.format_bytes(f.path.stat().st_size)
+        except OSError:
+            size = "—"
+        return folder, f.path.name, size
+
     def on_apply_done(self, ok: int, fail: int):
         self._hide_apply_ui()
         self.main_window.log(
@@ -710,12 +722,15 @@ class Phase1Tab(PhaseTab):
         )
 
     def build_table(self):
-        return FindingsTable(["File", "Issue", "Current", "Target"])
+        table = FindingsTable(["Path", "File", "Issue", "Current", "Target", "Size"])
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        return table
 
     def row_builder(self, f):
+        folder, name, size = self._file_cols(f)
         ftype = f.extra.get("type", "wav_format")
         issue = "Non-WAV → WAV" if ftype == "non_wav" else "Wrong format (SR/bits)"
-        return [f.path.name, issue, f.current, f.target]
+        return [folder, name, issue, f.current, f.target, size]
 
     def scan_fn(self):
         return (core.scan_phase_1,
@@ -1037,15 +1052,18 @@ class SilenceTab(PhaseTab):
         )
 
     def build_table(self):
-        return FindingsTable(["File", "Lead silence", "Trail silence", "Current", "Target", "Savings"])
+        table = FindingsTable(["Path", "File", "Lead silence", "Trail silence", "Savings", "Size"])
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        return table
 
     def row_builder(self, f):
+        folder, name, size = self._file_cols(f)
         lead  = f.extra.get("lead",  0.0)
         trail = f.extra.get("trail", 0.0)
         lead_s  = f"{lead:.2f}s"  if lead  >= config.SILENCE_MIN_DURATION else "—"
         trail_s = f"{trail:.2f}s" if trail >= config.SILENCE_MIN_DURATION else "—"
-        return [f.path.name, lead_s, trail_s,
-                f.current, f.target, core.format_bytes(f.savings_bytes)]
+        return [folder, name, lead_s, trail_s,
+                core.format_bytes(f.savings_bytes), size]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
@@ -1084,17 +1102,20 @@ class StereoMonoTab(PhaseTab):
         toolbar.insertWidget(3, loose_chk)
 
     def build_table(self):
-        return FindingsTable(["File", "Classification", "Current", "Target", "Savings"])
+        table = FindingsTable(["Path", "File", "Classification", "Savings", "Size"])
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        return table
 
     def row_builder(self, f):
+        folder, name, size = self._file_cols(f)
         cls = f.extra.get("classification", "?")
         cls_pretty = {
             "dual_mono": "Dual mono",
             "one_side":  f"One-sided ({f.extra.get('keep_channel', '?')} only)",
             "near_mono": "Near-mono",
         }.get(cls, cls)
-        return [f.path.name, cls_pretty,
-                f.current, f.target, core.format_bytes(f.savings_bytes)]
+        return [folder, name, cls_pretty,
+                core.format_bytes(f.savings_bytes), size]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
@@ -1144,17 +1165,20 @@ class Phase6Tab(PhaseTab):
         )
 
     def build_table(self):
-        return FindingsTable(
-            ["File", "BPM", "Confidence", "Duration", "New Name (editable)"],
-            editable_col=5,
+        table = FindingsTable(
+            ["Path", "File", "BPM", "Confidence", "Duration", "New Name (editable)"],
+            editable_col=6,
         )
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        return table
 
     def row_builder(self, f):
+        folder, name, _ = self._file_cols(f)
         bpm      = f.extra.get("bpm", "?")
         conf_lbl = f.extra.get("conf_label", "?")
         dur      = f.extra.get("duration")
         return [
-            f.path.name,
+            folder, name,
             str(int(bpm)) if isinstance(bpm, (int, float)) else str(bpm),
             conf_lbl,
             f"{dur:.1f}s" if dur is not None else "—",
