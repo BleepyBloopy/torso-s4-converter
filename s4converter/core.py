@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -463,6 +464,9 @@ def apply_phase_1(finding: Finding) -> bool:
 # Phase 2: Common prefix removal
 # ============================================================================
 
+_BPM_IN_PREFIX_RE = re.compile(r'\b\d{2,3}\s*bpm\b', re.IGNORECASE)
+
+
 def detect_common_prefix(filenames: List[str]) -> str:
     if len(filenames) < 2:
         return ""
@@ -473,8 +477,22 @@ def detect_common_prefix(filenames: List[str]) -> str:
         if sep in p:
             idx = p.rfind(sep)
             if idx >= config.MIN_PREFIX_LENGTH - len(sep):
-                return p[:idx + len(sep)]
-    return p if len(p) >= config.MIN_PREFIX_LENGTH else ""
+                p = p[:idx + len(sep)]
+                break
+    else:
+        if len(p) < config.MIN_PREFIX_LENGTH:
+            return ""
+
+    # Never include BPM info in the strippable prefix — losing BPM from a
+    # filename is worse than having a long name.  Truncate before the first
+    # BPM token and re-trim to the nearest word boundary.
+    bpm_m = _BPM_IN_PREFIX_RE.search(p)
+    if bpm_m:
+        p = p[:bpm_m.start()].rstrip(" _-")
+        if len(p) < config.MIN_PREFIX_LENGTH:
+            return ""
+
+    return p
 
 
 def scan_phase_2(folder: Path, cache: Optional[ProbeCache] = None) -> Optional[Finding]:
@@ -1547,7 +1565,9 @@ def scan_phase_7(
 ) -> List[Finding]:
     """Flag files with non-ASCII stems and suggest romanized alternatives."""
     findings = []
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new))
+    # Always walk all folders — folder markers from other phases (e.g. Wav Format)
+    # must not hide files that still have non-ASCII names.
+    all_files = list(iter_files(base_dir, skip_clean_folders=False))
     total = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -1558,6 +1578,15 @@ def scan_phase_7(
             file_cb(str(path))
         stem = path.stem
         if stem.isascii():
+            continue
+        # Skip stems whose only non-ASCII characters are typographic punctuation or
+        # symbols (en dash, em dash, copyright, etc.) — these rarely need renaming
+        # and produce noisy false positives.  Only flag if there is at least one
+        # non-ASCII letter (Unicode general category starts with 'L').
+        if not any(
+            not c.isascii() and unicodedata.category(c).startswith("L")
+            for c in stem
+        ):
             continue
         romanized = romanize_stem(stem)
         if not romanized or romanized == stem:

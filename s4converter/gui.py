@@ -1083,13 +1083,15 @@ class NameCleanupTab(PhaseTab):
                     progress_cb(phase_idx[0] * total + done, n_phases * total)
 
             cb = phase_cb if progress_cb else None
-            findings = core.scan_long_prefix(base_dir, only_new, cb, file_cb, stop_event)
+            # Priority order: BPM relabeling → non-ASCII romanization → long prefix strip.
+            # Apply runs in scan order, so BPM renames happen before prefix evaluation.
+            findings = core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event)
             phase_idx[0] = 1
             if not (stop_event and stop_event.is_set()):
-                findings += core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event)
+                findings += core.scan_phase_7(base_dir, only_new, cb, file_cb, stop_event)
             phase_idx[0] = 2
             if not (stop_event and stop_event.is_set()):
-                findings += core.scan_phase_7(base_dir, only_new, cb, file_cb, stop_event)
+                findings += core.scan_long_prefix(base_dir, only_new, cb, file_cb, stop_event)
             return findings
 
         return (combined, (base, only_new))
