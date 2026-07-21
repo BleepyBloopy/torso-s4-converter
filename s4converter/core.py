@@ -1349,8 +1349,12 @@ _BPM_IN_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# A number already properly labeled: digits immediately followed by "bpm".
-_BPM_LABELED_RE = re.compile(r'(?:^|[_\s\-])(\d{2,3})\s*bpm(?:[_\s\-]|$)', re.IGNORECASE)
+# A number already correctly formatted: digits with NO space before "bpm".
+# "138bpm" → skip.  "138 BPM" → NOT matched here (needs reformatting).
+_BPM_LABELED_RE = re.compile(r'(?:^|[_\s\-])(\d{2,3})bpm(?:[_\s\-]|$)', re.IGNORECASE)
+
+# Detects "NNN BPM" (space between number and word) — needs collapsing to "NNNbpm".
+_BPM_SPACED_RE = re.compile(r'(\s+)(bpm)(?=[_\s\-]|$)', re.IGNORECASE)
 
 # Any standalone 2-3 digit number not attached to a letter/digit on either side.
 _BPM_STANDALONE_RE = re.compile(r'(?<![a-zA-Z0-9])(\d{2,3})(?![a-zA-Z0-9])')
@@ -1395,21 +1399,29 @@ def scan_bpm_relabel(
         # Skip files that already carry a proper 'bpm' label.
         if _BPM_LABELED_RE.search(stem):
             continue
-        # Find the first standalone number in BPM range that lacks 'bpm'.
+        # Find the first standalone number in BPM range that needs a 'bpm' label.
         candidate = None
         for m in _BPM_STANDALONE_RE.finditer(stem):
             num = int(m.group(1))
             if num not in _BPM_RELABEL_RANGE:
                 continue
-            # Confirm 'bpm' doesn't already follow the number.
-            if re.match(r'\s*bpm', stem[m.end():], re.IGNORECASE):
+            after = stem[m.end():]
+            spaced = _BPM_SPACED_RE.match(after)
+            if spaced:
+                # "138 BPM" → "138bpm": collapse the space between number and word.
+                new_stem = stem[:m.end()] + 'bpm' + after[len(spaced.group(1)) + len(spaced.group(2)):]
+                candidate = (m, num, new_stem)
+                break
+            if re.match(r'bpm', after, re.IGNORECASE):
+                # Already "138bpm" — the _BPM_LABELED_RE above should have caught this,
+                # but skip to be safe.
                 continue
-            candidate = (m, num)
+            # Bare number with no 'bpm' at all → insert it directly after the number.
+            candidate = (m, num, stem[:m.end()] + 'bpm' + after)
             break
         if candidate is None:
             continue
-        m, num = candidate
-        new_stem = stem[:m.end()] + 'bpm' + stem[m.end():]
+        m, num, new_stem = candidate
         new_name = new_stem + path.suffix
         findings.append(Finding(
             phase=6, path=path,
