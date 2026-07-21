@@ -233,6 +233,20 @@ class ReportWorker(QObject):
 _TABLE_DISPLAY_CAP = 5000
 
 
+def _parse_size_for_sort(s: str) -> float:
+    """Parse a human-readable size string like '444.01 KB' into bytes for numeric sort."""
+    parts = s.strip().split()
+    if len(parts) != 2:
+        return -1.0
+    try:
+        n = float(parts[0])
+    except ValueError:
+        return -1.0
+    unit = parts[1].upper()
+    multipliers = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3}
+    return n * multipliers.get(unit, 1.0)
+
+
 class FindingsTable(QTableWidget):
     """Table that displays findings with a checkbox per row."""
 
@@ -252,10 +266,19 @@ class FindingsTable(QTableWidget):
             self.editable_col = None
         self.findings: List[core.Finding] = []  # full list, may exceed display cap
 
+        # Sort state — reset on each new set_findings call.
+        self._row_builder = None
+        self._original_order: List[core.Finding] = []
+        self._sort_col: Optional[int] = None   # logical column index (1-based), or None
+        self._sort_asc: bool = True
+        self._sort_key_map: dict = {}           # id(finding) → list of string sort keys
+        self._post_render_fn = None             # called after every _rebuild_display()
+
         self.setColumnCount(len(self.columns))
         self.setHorizontalHeaderLabels(self.columns)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setAlternatingRowColors(True)
         self.setEditTriggers(
@@ -265,8 +288,18 @@ class FindingsTable(QTableWidget):
 
     def set_findings(self, findings: List[core.Finding], row_builder):
         """row_builder(finding) -> list of strings (one per non-checkbox column)."""
-        self.findings = findings
-        display = findings[:_TABLE_DISPLAY_CAP]
+        self._row_builder = row_builder
+        self._original_order = list(findings)
+        self.findings = list(findings)
+        self._sort_col = None
+        self._sort_asc = True
+        self._sort_key_map = {}
+        self.setHorizontalHeaderLabels(self.columns)  # reset any sort arrows
+        self._rebuild_display()
+
+    def _rebuild_display(self):
+        """Render the current self.findings[:CAP] into the table."""
+        display = self.findings[:_TABLE_DISPLAY_CAP]
 
         self.setUpdatesEnabled(False)
         self.setSortingEnabled(False)
@@ -278,7 +311,7 @@ class FindingsTable(QTableWidget):
             chk.setCheckState(Qt.CheckState.Checked if f.selected else Qt.CheckState.Unchecked)
             self.setItem(row, 0, chk)
 
-            for col, value in enumerate(row_builder(f), start=1):
+            for col, value in enumerate(self._row_builder(f), start=1):
                 item = QTableWidgetItem(str(value))
                 if col not in self._editable_cols:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -293,6 +326,62 @@ class FindingsTable(QTableWidget):
                 self.resizeColumnToContents(col)
                 if self.columnWidth(col) > max_w:
                     self.setColumnWidth(col, max_w)
+
+        if self._post_render_fn:
+            self._post_render_fn()
+
+    def _ensure_sort_keys(self):
+        """Lazily build sort-key map for all findings (called on first sort click)."""
+        if self._sort_key_map:
+            return
+        for f in self._original_order:
+            values = [str(v) for v in self._row_builder(f)]
+            self._sort_key_map[id(f)] = values
+
+    def _sort_key_for(self, f: "core.Finding", data_col: int):
+        """Return a comparable sort key for finding f at data_col (0-indexed into row_builder output)."""
+        values = self._sort_key_map.get(id(f), [])
+        raw = values[data_col] if data_col < len(values) else ""
+        # Numeric sort for Size column; string sort for everything else.
+        col_name = self.columns[data_col + 1] if data_col + 1 < len(self.columns) else ""
+        if col_name == "Size":
+            return _parse_size_for_sort(raw)
+        return raw.lower()
+
+    def _on_header_clicked(self, logical_col: int):
+        if not self.findings or logical_col == 0:
+            return
+
+        data_col = logical_col - 1  # 0-indexed into row_builder output
+
+        if self._sort_col == logical_col:
+            if self._sort_asc:
+                self._sort_asc = False
+            else:
+                # Third click: restore original order
+                self.findings = list(self._original_order)
+                self._sort_col = None
+                self.setHorizontalHeaderLabels(self.columns)
+                self._rebuild_display()
+                return
+        else:
+            self._sort_col = logical_col
+            self._sort_asc = True
+
+        self._ensure_sort_keys()
+        self.findings.sort(
+            key=lambda f: self._sort_key_for(f, data_col),
+            reverse=not self._sort_asc,
+        )
+
+        # Update header labels: add arrow to sorted column, reset others.
+        self.setHorizontalHeaderLabels(self.columns)
+        arrow = "↑" if self._sort_asc else "↓"
+        h = self.horizontalHeaderItem(logical_col)
+        if h:
+            h.setText(f"{self.columns[logical_col]} {arrow}")
+
+        self._rebuild_display()
 
     def get_selected_findings(self) -> List[core.Finding]:
         selected = []
@@ -790,13 +879,14 @@ class FileCleanupTab(PhaseTab):
 
     def on_scan_done(self, findings):
         super().on_scan_done(findings)
+        self.table._post_render_fn = self._add_open_buttons
         self._add_open_buttons()
 
     def _add_open_buttons(self):
         import subprocess as _sp
-        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
+        displayed = min(len(self.table.findings), _TABLE_DISPLAY_CAP)
         for row in range(displayed):
-            f = self.findings[row]
+            f = self.table.findings[row]
             reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
             btn = QPushButton("📂")
             btn.setFlat(True)
@@ -919,13 +1009,14 @@ class NameCleanupTab(PhaseTab):
 
     def on_scan_done(self, findings):
         super().on_scan_done(findings)
+        self.table._post_render_fn = self._add_open_buttons
         self._add_open_buttons()
 
     def _add_open_buttons(self):
         import subprocess as _sp
-        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
+        displayed = min(len(self.table.findings), _TABLE_DISPLAY_CAP)
         for row in range(displayed):
-            f = self.findings[row]
+            f = self.table.findings[row]
             reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
             btn = QPushButton("📂")
             btn.setFlat(True)
