@@ -89,6 +89,7 @@ class ApplyWorker(QObject):
         self.findings = findings
         self.extra_args = extra_args or {}
         self.cache = cache
+        self.failed_findings: list = []
         import threading
         self.stop_event = threading.Event()
 
@@ -122,6 +123,7 @@ class ApplyWorker(QObject):
                             self.cache.mark_phase_done(out, f.phase)
                 else:
                     fail += 1
+                    self.failed_findings.append(f)
                 self.progress.emit(i, total)
             self._finalize(touched_folders)
             self.finished.emit(ok, fail)
@@ -776,6 +778,9 @@ class PhaseTab(QWidget):
         self.main_window.log(
             f"[{self.title}] Done: {ok} succeeded, {fail} failed."
         )
+        if fail and hasattr(self, "worker") and self.worker:
+            for f in self.worker.failed_findings[:50]:
+                self.main_window.log(f"  FAILED: {f.path}")
         QMessageBox.information(self, "Complete", f"{ok} succeeded, {fail} failed.")
 
     def on_apply_stopped(self, ok: int, fail: int):
@@ -954,6 +959,9 @@ class FileCleanupTab(PhaseTab):
             f"[{self.title}] Done: {ok} succeeded, {fail} failed. "
             f"Cascade: {empty_deleted} empty folders removed, {flattened} layers flattened."
         )
+        if fail and hasattr(self, "worker") and self.worker:
+            for f in self.worker.failed_findings[:50]:
+                self.main_window.log(f"  FAILED: {f.path}")
         extra = ""
         if empty_deleted or flattened:
             extra = f"\n\nCascade cleanup: {empty_deleted} empty folder{'s' if empty_deleted != 1 else ''} removed, {flattened} folder layer{'s' if flattened != 1 else ''} flattened."

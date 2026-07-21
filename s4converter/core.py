@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -829,10 +830,11 @@ def apply_phase_8(finding: Finding) -> bool:
             if dest.exists():
                 return False
             item.rename(dest)
-        for leftover in child.iterdir():
-            try: leftover.unlink()
-            except OSError: pass
-        child.rmdir()
+        # Remove the now-empty child folder, including any leftover hidden files
+        # (.DS_Store, ._* AppleDouble) that macOS leaves behind on FAT32 drives.
+        shutil.rmtree(str(child), ignore_errors=True)
+        if child.exists():
+            return False
         FolderMarkers.invalidate(parent)
         return True
     except OSError:
