@@ -83,13 +83,17 @@ class ApplyWorker(QObject):
     stopped = pyqtSignal(int, int)            # ok, fail — stopped early
     error = pyqtSignal(str)
 
-    def __init__(self, apply_fn, findings, extra_args=None, cache=None):
+    def __init__(self, apply_fn, findings, extra_args=None, cache=None,
+                 post_apply_fn=None):
         super().__init__()
         self.apply_fn = apply_fn
         self.findings = findings
         self.extra_args = extra_args or {}
         self.cache = cache
         self.failed_findings: list = []
+        self.post_apply_fn = post_apply_fn  # called after main loop; signature: (status_cb) → (int, int)
+        self.cascade_empty = 0
+        self.cascade_flat = 0
         import threading
         self.stop_event = threading.Event()
 
@@ -126,6 +130,13 @@ class ApplyWorker(QObject):
                     self.failed_findings.append(f)
                 self.progress.emit(i, total)
             self._finalize(touched_folders)
+            if self.post_apply_fn and not self.stop_event.is_set():
+                try:
+                    e, f = self.post_apply_fn(lambda msg: self.current_file.emit(msg))
+                    self.cascade_empty = e
+                    self.cascade_flat = f
+                except Exception:
+                    pass
             self.finished.emit(ok, fail)
         except Exception as e:
             self.error.emit(str(e))
@@ -728,7 +739,8 @@ class PhaseTab(QWidget):
 
         self.thread = QThread()
         self.worker = ApplyWorker(self.apply_fn(), selected, extra,
-                                  cache=self.main_window.cache)
+                                  cache=self.main_window.cache,
+                                  post_apply_fn=self.get_post_apply_fn())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
@@ -743,6 +755,10 @@ class PhaseTab(QWidget):
 
     def get_apply_extra(self, selected: list) -> dict:
         return {}
+
+    def get_post_apply_fn(self):
+        """Override in subclasses to run work inside the apply thread after all items finish."""
+        return None
 
     def _on_apply_file(self, filename: str):
         self._current_file_label.setText(f"⟳  {filename}")
@@ -944,16 +960,20 @@ class FileCleanupTab(PhaseTab):
             return core.apply_phase_8(finding)
         return dispatch
 
-    def on_apply_done(self, ok: int, fail: int):
-        # Run cascade cleanup after junk/collapse apply — removes empty folders and
-        # any newly-created single-child layers.
+    def get_post_apply_fn(self):
         base = self.main_window.base_dir
+        def _cascade(status_cb):
+            if base and base.exists():
+                return core.cascade_cleanup(base, status_cb=status_cb)
+            return 0, 0
+        return _cascade
+
+    def on_apply_done(self, ok: int, fail: int):
+        # Cascade ran inside the worker thread; read results from there.
         empty_deleted = flattened = 0
-        if base and base.exists():
-            try:
-                empty_deleted, flattened = core.cascade_cleanup(base)
-            except Exception:
-                pass
+        if hasattr(self, "worker") and self.worker:
+            empty_deleted = self.worker.cascade_empty
+            flattened    = self.worker.cascade_flat
         self._hide_apply_ui()
         self.main_window.log(
             f"[{self.title}] Done: {ok} succeeded, {fail} failed. "

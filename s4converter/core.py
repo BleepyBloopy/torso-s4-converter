@@ -894,12 +894,19 @@ def apply_delete_junk(finding: Finding) -> bool:
         return False
 
 
-def cascade_cleanup(base_dir: Path) -> Tuple[int, int]:
+def cascade_cleanup(
+    base_dir: Path,
+    status_cb: Optional[Callable[[str], None]] = None,
+) -> Tuple[int, int]:
     """After deleting junk files, clean up the tree:
     1. Delete newly-empty folders (bottom-up).
     2. Flatten any single-child folders that appeared after deletions.
     Returns (empty_folders_deleted, folders_flattened).
+    status_cb(msg) is called with human-readable progress messages.
     """
+    if status_cb:
+        status_cb("Cascade — pass 1: removing empty folders…")
+
     empty_deleted = 0
     for root, dirs, files in os.walk(base_dir, topdown=False):
         root_path = Path(root)
@@ -923,15 +930,29 @@ def cascade_cleanup(base_dir: Path) -> Tuple[int, int]:
                 root_path.rmdir()
                 FolderMarkers.invalidate(root_path.parent)
                 empty_deleted += 1
+                if status_cb and empty_deleted % 100 == 0:
+                    status_cb(f"Cascade — {empty_deleted:,} empty folders removed…")
         except OSError:
             pass
+
+    if status_cb:
+        status_cb(f"Cascade — pass 2: flattening single-child layers…")
 
     # Flatten single-child folder layers (phase 8 logic).
     flattened = 0
     candidates = scan_phase_8(base_dir, only_new=False)
     for finding in candidates:
+        if status_cb:
+            try:
+                name = finding.path.relative_to(base_dir)
+            except ValueError:
+                name = finding.path.name
+            status_cb(f"Cascade — flattening '{name}'")
         if apply_phase_8(finding):
             flattened += 1
+
+    if status_cb:
+        status_cb(f"Cascade — done  ({empty_deleted:,} empty folders, {flattened} layers)")
 
     return empty_deleted, flattened
 
