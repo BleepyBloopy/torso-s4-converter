@@ -388,16 +388,6 @@ class PhaseTab(QWidget):
         self.stop_btn.setStyleSheet("padding: 6px 12px;")
         toolbar.addWidget(self.stop_btn)
 
-        self.skip_btn = QPushButton("🚫 Skip Selected")
-        self.skip_btn.clicked.connect(self.skip_selected)
-        self.skip_btn.setEnabled(False)
-        self.skip_btn.setToolTip(
-            "Mark selected files as 'already handled' in the cache — "
-            "they won't appear in future scans unless the file changes."
-        )
-        self.skip_btn.setStyleSheet("padding: 6px 12px;")
-        toolbar.addWidget(self.skip_btn)
-
         self.apply_btn = QPushButton("✓ Apply Selected")
         self.apply_btn.clicked.connect(self.start_apply)
         self.apply_btn.setEnabled(False)
@@ -514,7 +504,6 @@ class PhaseTab(QWidget):
         else:
             msg = f"{n} finding{'s' if n != 1 else ''} — review the table and apply as needed."
         self.apply_btn.setEnabled(n > 0)
-        self.skip_btn.setEnabled(n > 0)
         QMessageBox.information(self, f"{self.title} — Scan Complete", msg)
 
     def on_scan_stopped(self):
@@ -677,40 +666,6 @@ class PhaseTab(QWidget):
         self.stop_btn.setEnabled(True)
         self.main_window.set_busy(False)
 
-    def skip_selected(self):
-        """Mark selected findings as phase-done in the cache without applying anything.
-        They won't appear in future scans unless the file itself changes."""
-        selected = self.table.get_selected_findings()
-        if not selected:
-            QMessageBox.information(self, "Nothing Selected", "No items are checked.")
-            return
-        cache = self.main_window.cache
-        if cache is None:
-            QMessageBox.warning(self, "No Cache", "No drive loaded.")
-            return
-        skipped = 0
-        for f in selected:
-            if f.path.exists():
-                cache.mark_phase_done(f.path, f.phase)
-                skipped += 1
-        cache.save()
-        # Remove skipped findings from the table.
-        skipped_ids = {id(f) for f in selected}
-        self.findings = [f for f in self.findings if id(f) not in skipped_ids]
-        self.table.set_findings(self.findings, self.row_builder)
-        n = len(self.findings)
-        self.count_label.setText(f"{n} findings" if n else "0 findings")
-        self.apply_btn.setEnabled(bool(self.findings))
-        self.skip_btn.setEnabled(bool(self.findings))
-        self.main_window.log(
-            f"[{self.title}] Skipped {skipped} file{'s' if skipped != 1 else ''} — "
-            "won't appear in future scans unless file changes."
-        )
-        QMessageBox.information(
-            self, "Skipped",
-            f"{skipped} file{'s' if skipped != 1 else ''} marked as skipped.\n"
-            "They won't appear in future scans."
-        )
 
     def _show_help(self):
         QMessageBox.information(self, self.title, self._help_text)
@@ -2327,8 +2282,6 @@ class MainWindow(QMainWindow):
                 continue
             tab.scan_btn.setEnabled(not busy)
             tab.apply_btn.setEnabled(False if busy else bool(tab.findings))
-            if hasattr(tab, 'skip_btn'):
-                tab.skip_btn.setEnabled(False if busy else bool(tab.findings))
 
     def _start_caffeinate(self):
         import sys

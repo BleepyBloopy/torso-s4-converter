@@ -85,6 +85,7 @@ JUNK_EXTENSIONS: frozenset = frozenset({
     ".als",   # Ableton Live Set (references audio, doesn't embed it)
     ".cfg",   # Generic config
     ".xpm",   # MPC program
+    ".mp4",   # Video files (audio mp4s are converted by Phase 1 first; these are video-only)
 })
 
 
