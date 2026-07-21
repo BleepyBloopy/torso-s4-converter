@@ -1349,9 +1349,15 @@ _BPM_IN_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches a bare 2–3 digit number at the START of a stem followed by a separator,
-# but NOT if "bpm" already follows the number (those are already correctly labeled).
-_BPM_BARE_PREFIX_RE = re.compile(r'^(\d{2,3})([_\s\-])(?!bpm)', re.IGNORECASE)
+# A number already properly labeled: digits immediately followed by "bpm".
+_BPM_LABELED_RE = re.compile(r'(?:^|[_\s\-])(\d{2,3})\s*bpm(?:[_\s\-]|$)', re.IGNORECASE)
+
+# Any standalone 2-3 digit number not attached to a letter/digit on either side.
+_BPM_STANDALONE_RE = re.compile(r'(?<![a-zA-Z0-9])(\d{2,3})(?![a-zA-Z0-9])')
+
+# Valid BPM range for relabeling — filters out track numbers (1-59) and
+# implausible values (>220).
+_BPM_RELABEL_RANGE = range(60, 221)
 
 
 def _stem_has_bpm(path: Path) -> bool:
@@ -1366,10 +1372,17 @@ def scan_bpm_relabel(
     file_cb: Optional[Callable[[str], None]] = None,
     stop_event=None,
 ) -> List[Finding]:
-    """Find WAV files with a bare numeric BPM prefix (e.g. '120_kick') and
-    suggest adding the 'bpm' label (e.g. '120bpm_kick') so the S-4 registers it."""
+    """Find WAV files with a bare BPM number (anywhere in the stem) and suggest
+    inserting the 'bpm' label so the S-4 recognises it.
+
+    Matches numbers 60–220 that appear standalone (not glued to letters) and
+    are not already followed by 'bpm'.  Track numbers like '13' are ignored
+    because they fall outside the BPM range.
+    """
     findings = []
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
+    # Always scan all folders — folder markers from Wav Format must not hide
+    # files whose BPM hasn't been labelled yet.
+    all_files = list(iter_files(base_dir, skip_clean_folders=False, extensions={".wav"}))
     total = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -1378,12 +1391,25 @@ def scan_bpm_relabel(
             progress_cb(i, total)
         if file_cb:
             file_cb(str(path))
-        m = _BPM_BARE_PREFIX_RE.match(path.stem)
-        if not m:
+        stem = path.stem
+        # Skip files that already carry a proper 'bpm' label.
+        if _BPM_LABELED_RE.search(stem):
             continue
-        num, sep = m.group(1), m.group(2)
-        rest     = path.stem[m.end():]
-        new_stem = f"{num}bpm{sep}{rest}"
+        # Find the first standalone number in BPM range that lacks 'bpm'.
+        candidate = None
+        for m in _BPM_STANDALONE_RE.finditer(stem):
+            num = int(m.group(1))
+            if num not in _BPM_RELABEL_RANGE:
+                continue
+            # Confirm 'bpm' doesn't already follow the number.
+            if re.match(r'\s*bpm', stem[m.end():], re.IGNORECASE):
+                continue
+            candidate = (m, num)
+            break
+        if candidate is None:
+            continue
+        m, num = candidate
+        new_stem = stem[:m.end()] + 'bpm' + stem[m.end():]
         new_name = new_stem + path.suffix
         findings.append(Finding(
             phase=6, path=path,
@@ -1391,7 +1417,7 @@ def scan_bpm_relabel(
             current=path.name,
             target=new_name,
             selected=True,
-            extra={"bpm": int(num), "conf_label": "—", "duration": None, "type": "relabel"},
+            extra={"bpm": num, "conf_label": "—", "duration": None, "type": "relabel"},
         ))
     if progress_cb:
         progress_cb(total, total)
