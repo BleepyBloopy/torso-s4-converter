@@ -2,6 +2,16 @@
 
 ---
 
+## [v8.3] – 2026-07-22
+
+### Added
+- **BPM Relabel — one-shot size filter** — files below `bpm_relabel_max_oneshot_kb` (default 400 KB) are silently skipped by `scan_bpm_relabel`. At 48 kHz / 16-bit this covers anything shorter than roughly 2 seconds stereo or 4 seconds mono — safely below the shortest realistic 1-bar loop. Configurable in `config.json`.
+
+### Fixed
+- **BPM Relabel — multi-type flat packs not dismissed** — the sequential number filter previously pooled all findings per folder, so packs like Vengeance Freakz On Beatz (9 instrument types — hihat, kick, clap, etc. — all numbered 1–96 in the same directory) produced 333 pooled numbers with duplicates, breaking the consecutive check. The filter now groups by `(folder, stem-prefix-before-the-number)` so `"VFOB2 CL Hihat "` and `"VFOB2 Kick "` are evaluated independently; each prefix group's numbers 60–96 are correctly identified as sequential and dismissed.
+
+---
+
 ## [v8.2] – 2026-07-22
 
 ### Added

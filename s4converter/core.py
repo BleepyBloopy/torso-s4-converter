@@ -1398,6 +1398,12 @@ def scan_bpm_relabel(
         # Skip files the user has permanently dismissed as "not a BPM".
         if cache is not None and cache.is_bpm_relabel_reviewed(path):
             continue
+        # Skip files below the one-shot size threshold — too short to be a loop.
+        try:
+            if path.stat().st_size < config.BPM_RELABEL_MAX_ONESHOT_BYTES:
+                continue
+        except OSError:
+            pass
         stem = path.stem
         # Skip files that already carry a proper 'bpm' label.
         if _BPM_LABELED_RE.search(stem):

@@ -96,6 +96,8 @@ BPM_MIN_BEATS       = int(  _u.get("bpm_min_beats",         4))
 BPM_MIN_CONFIDENCE  = float(_u.get("bpm_min_confidence",  0.4))
 BPM_TARGET_MIN      = int(  _u.get("bpm_target_min",       70))
 BPM_TARGET_MAX      = int(  _u.get("bpm_target_max",      175))
+BPM_RELABEL_MAX_ONESHOT_BYTES = int(_u.get("bpm_relabel_max_oneshot_kb", 400)) * 1024
+
 BPM_SKIP_FOLDER_HINTS = set(_u.get("bpm_skip_folder_hints", [
     "one shot", "one-shot", "oneshot", "fx", "field recording",
     "ambience", "ambient", "foley", "sfx", "hit", "hits",

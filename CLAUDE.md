@@ -111,10 +111,11 @@ Tab 1 (Sync) is always enabled even before loading a drive. Tabs 2–7 require a
 **`scan_bpm_relabel`** (`core.py`): Finds WAV files with a bare 2–3 digit number in the stem (BPM range 60–220) not followed by `bpm`. Runs in the Name Cleanup tab (before non-ASCII and long prefix passes). Accepts `cache: Optional[ProbeCache]` to skip files marked as reviewed. False-positive filters (applied in order):
 - `is_bpm_relabel_reviewed(path)` — user-reviewed via "Not BPM" button
 - `_BPM_LABELED_RE` — already has `bpm` label
+- **Size check**: `path.stat().st_size < config.BPM_RELABEL_MAX_ONESHOT_BYTES` (default 400 KB) → skip. At 48 kHz/16-bit this catches anything shorter than ~2 s stereo / ~4 s mono — well below any realistic 1-bar loop. Uses a plain `stat()` call, no ffprobe.
 - Leading-zero check: `m.group(1)[0] == '0'` → number is zero-padded (e.g. `067`) → add folder to `leading_zero_folders` and skip. Post-loop: all findings from any folder in `leading_zero_folders` are dropped, so `101`, `120`, etc. in the same folder are also dismissed.
 - Apostrophe check: number immediately followed by `'` → skip (e.g. `90's`)
 - Decimal check: number immediately followed by `.digit` → skip (e.g. GPS coords `72.87109`)
-- Sequential folder filter (post-loop, applied after leading-zero filter): groups remaining findings by folder; if all numbers form a perfect consecutive sequence (step=1, ≥4 files), drops the entire folder and marks it clean for phase 10
+- **Prefix-group sequential filter** (post-loop, applied after leading-zero filter): groups remaining findings by `(folder, stem-prefix-before-the-number)`. Each prefix group whose numbers form a perfect consecutive sequence (step=1, ≥4 files) is dismissed. This handles flat multi-type packs (e.g. Vengeance: `"VFOB2 CL Hihat 60–96"` and `"VFOB2 Kick 60–96"` in the same directory) where the old folder-level check failed due to duplicate numbers from multiple instrument types. The `"bpm_prefix"` key is stored in each finding's `extra` dict at creation time.
 
 Uses marker phase 10 (distinct from phase 6) so BPM Detection and BPM Relabel don't overwrite each other's folder markers.
 
