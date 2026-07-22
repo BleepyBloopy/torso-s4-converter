@@ -69,7 +69,12 @@ Tab 1 (Sync) is always enabled even before loading a drive. Tabs 2–7 require a
 
 **scan/apply split:** Every phase has `scan_phase_N()` → `List[Finding]` and `apply_phase_N(finding)`. Scan is always read-only. GUI and CLI call them the same way.
 
-**`FindingsTable` display cap:** `_TABLE_DISPLAY_CAP = 5000`. Tables with more findings only render the first 5 000 rows to avoid OOM from `QTableWidgetItem` allocation. `get_selected_findings()` and `select_all()` handle findings beyond the cap via the `f.selected` flag directly. The count label shows "X findings (showing first 5 000 — all included in Apply)" when the cap is hit.
+**`FindingsTable` pagination:** `_PAGE_SIZE = 1000` (class constant). `_rebuild_display()` renders only the current page slice (`page_findings()`). A pagination bar (`make_pagination_bar()`) sits below the table and is hidden when all findings fit on one page. Key methods:
+- `go_to_page(n)`: calls `_sync_page_to_flags()` to flush checkbox + editable-col state to finding objects before switching, then rebuilds and updates the bar.
+- `select_page(checked)`: checks/unchecks only the current page; does not touch other pages' `.selected` flags.
+- `select_all(checked)`: updates every finding's `.selected` flag, then reflects state in current page checkboxes.
+- `get_selected_findings()`: calls `_sync_page_to_flags()` first so the current page is flushed, then returns `[f for f in self.findings if f.selected]`.
+- `_edits: dict[int, str]`: caches editable-col values keyed by `id(finding)` so inline edits on page N survive navigation to page M. `get_col_value()` checks the current page's live table rows first, then falls back to `_edits`.
 
 **`FindingsTable` multi-select:** `ExtendedSelection` mode is set explicitly. Clicking a checkbox in a multi-row selection propagates the same state to all selected rows via `_on_item_changed`. Space key toggles all highlighted rows. `_rebuilding` flag prevents `itemChanged` firing during `_rebuild_display`; `_propagating` flag prevents cascading when bulk-setting checkboxes (used in `select_all`, `keyPressEvent`, and `_on_item_changed`).
 
@@ -101,12 +106,13 @@ Tab 1 (Sync) is always enabled even before loading a drive. Tabs 2–7 require a
 - `near_mono`: diff between -90 and -60 dB — shown only in loose mode, unselected by default
 - `true_stereo`: diff > -60 dB — never flagged
 
-**`scan_bpm_relabel`** (`core.py`): Finds WAV files with a bare 2–3 digit number in the stem (BPM range 60–220) not followed by `bpm`. Runs in the Name Cleanup tab (before non-ASCII and long prefix passes). Accepts `cache: Optional[ProbeCache]` to skip files marked as reviewed. False-positive filters:
+**`scan_bpm_relabel`** (`core.py`): Finds WAV files with a bare 2–3 digit number in the stem (BPM range 60–220) not followed by `bpm`. Runs in the Name Cleanup tab (before non-ASCII and long prefix passes). Accepts `cache: Optional[ProbeCache]` to skip files marked as reviewed. False-positive filters (applied in order):
 - `is_bpm_relabel_reviewed(path)` — user-reviewed via "Not BPM" button
 - `_BPM_LABELED_RE` — already has `bpm` label
+- Leading-zero check: `m.group(1)[0] == '0'` → number is zero-padded (e.g. `067`) → add folder to `leading_zero_folders` and skip. Post-loop: all findings from any folder in `leading_zero_folders` are dropped, so `101`, `120`, etc. in the same folder are also dismissed.
 - Apostrophe check: number immediately followed by `'` → skip (e.g. `90's`)
-- Decimal check: number immediately followed by `.digit` → skip (e.g. GPS coords `135.7744`)
-- Sequential folder filter (post-loop): groups findings by folder; if all numbers form a perfect consecutive sequence (step=1, ≥4 files), drops the entire folder and marks it clean for phase 10
+- Decimal check: number immediately followed by `.digit` → skip (e.g. GPS coords `72.87109`)
+- Sequential folder filter (post-loop, applied after leading-zero filter): groups remaining findings by folder; if all numbers form a perfect consecutive sequence (step=1, ≥4 files), drops the entire folder and marks it clean for phase 10
 
 Uses marker phase 10 (distinct from phase 6) so BPM Detection and BPM Relabel don't overwrite each other's folder markers.
 

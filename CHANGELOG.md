@@ -2,6 +2,19 @@
 
 ---
 
+## [v8.1] – 2026-07-22
+
+### Added
+- **Pagination in all findings tables** — replaces the old 5,000-row hard cap (which silently hid findings beyond the limit) with full pagination at 1,000 rows per page. A bar below the table appears when there is more than one page, showing `← Prev`, page indicator (`Page 2 of 8  (1,001–2,000 of 7,432)`), `Next →`, and a **Select Page** button.
+  - **Select Page** checks only the current page's rows; other pages' selections are untouched — useful for bulk-reviewing one section of Name Cleanup at a time.
+  - **Select All / Select None** (existing toolbar buttons) still operate across all pages.
+  - Navigating between pages saves checkbox state and inline-edited values so nothing is lost when switching pages.
+  - Edits made to the "Edit" column (e.g. prefix replacement in Name Cleanup) survive page navigation and are included in Apply regardless of which page they were made on.
+  - Bar is hidden when all findings fit on one page (≤ 1,000), keeping the UI clean for small result sets.
+- **BPM Relabel — zero-padded number filter** — numbers whose digit string starts with `0` (e.g. `067`, `082`) are treated as zero-padded sample indices and skipped. If any file in a folder has a zero-padded number, all other BPM-looking numbers in that same folder are also dismissed (e.g. `VEH1 Percussive FX - 067` through `VEH1 Percussive FX - 152` are all treated as pack indices, not BPMs).
+
+---
+
 ## [v8.0] – 2026-07-22
 
 ### Added
