@@ -69,6 +69,8 @@ Tab 1 (Sync) is always enabled even before loading a drive. Tabs 2–7 require a
 
 **scan/apply split:** Every phase has `scan_phase_N()` → `List[Finding]` and `apply_phase_N(finding)`. Scan is always read-only. GUI and CLI call them the same way.
 
+**Post-apply table pruning** (`PhaseTab._prune_succeeded`): Called from both `on_apply_done` and `on_apply_stopped`. Computes `failed_ids = {id(f) for f in worker.failed_findings}` and `applied_ids = {id(f) for f in worker.findings}`, then keeps only findings that were either not applied (unchecked) or applied and failed. Rebuilds the table and updates the count label and Apply button. `_on_table_pruned()` is an empty hook; `NameCleanupTab` overrides it to refresh the Not BPM button state. `FileCleanupTab.on_apply_done` overrides the base without calling super, so it calls `_prune_succeeded()` explicitly.
+
 **`FindingsTable` pagination:** `_PAGE_SIZE = 1000` (class constant). `_rebuild_display()` renders only the current page slice (`page_findings()`). A pagination bar (`make_pagination_bar()`) sits below the table and is hidden when all findings fit on one page. Key methods:
 - `go_to_page(n)`: calls `_sync_page_to_flags()` to flush checkbox + editable-col state to finding objects before switching, then rebuilds and updates the bar.
 - `select_page(checked)`: checks/unchecks only the current page; does not touch other pages' `.selected` flags.

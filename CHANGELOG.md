@@ -2,6 +2,16 @@
 
 ---
 
+## [v8.2] – 2026-07-22
+
+### Added
+- **Auto-remove succeeded findings after Apply** — when an apply run finishes (or is stopped mid-way), all successfully processed findings are removed from the table automatically. Only failed findings remain, so the user immediately sees what still needs attention without any manual cleanup or re-scan.
+  - Works on full apply and on early-stopped applies — whatever finished successfully is pruned.
+  - Count label and Apply button update to reflect the remaining failures.
+  - `NameCleanupTab` also updates the Not BPM button state after pruning removes BPM Relabel rows.
+
+---
+
 ## [v8.1] – 2026-07-22
 
 ### Added
