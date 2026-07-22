@@ -1,4 +1,4 @@
-# Torso S-4 Smart Sample Converter v7.9
+# Torso S-4 Smart Sample Converter v8.0
 
 Standardize, organize, and sync audio sample libraries for the Torso S-4 — works with both the S-4's internal storage and external USB drives.
 
@@ -6,10 +6,9 @@ Key features:
 
 - **Internal sync** — copies new/changed Mac source files to USB without re-copying files already converted or renamed by this app; detects source-side moves; never deletes from USB without confirmation
 - **Persistent ffprobe cache** — only probes new/changed files (150× faster re-scans)
-- **Per-folder markers** — skips entire folders that haven't changed since last run
-- **Per-file done flags** — files confirmed clean or already converted are skipped on every subsequent scan; re-scans after adding new samples are O(new files), not O(total library)
+- **Per-phase folder markers** — each scan phase maintains its own `.s4_phase{N}` marker; phases never interfere with each other; fast scans skip folders that haven't changed for that specific phase
 - **Parallel ffprobe** — uses multiple workers during the initial scan
-- **GUI** — review findings in a table, check/uncheck per file, edit names inline
+- **GUI** — review findings in a table, multi-select rows to bulk-check/uncheck, edit names inline, sort any column
 - **Busy lock** — all buttons gray out while a scan or apply is running; warns before quit
 - **Dry-run mode** — preview every change before touching anything (CLI only)
 - **Atomic writes** — converter never leaves half-finished files
@@ -55,12 +54,14 @@ uv run python -m s4converter.gui
 
 **Manual workflow:**
 
-1. Go to **Tab 0 — Sync**, click **Scan**, review findings, click **Copy Selected**
+1. Go to **Tab 1 — Sync**, click **Scan**, review findings, click **Copy Selected**
 2. Select your drive from the dropdown and click **Load**
 3. Click into a processing tab and click **Scan**
 4. While scanning, a live progress panel shows completed folders (✓), the active folder with its full path, and the current file being scanned. A **⏹ Stop** button lets you exit gracefully after the current batch — the cache is saved automatically.
 5. Review findings in the table; uncheck anything you don't want to change. Tables with more than 5 000 findings show the first 5 000 rows — all findings are still included when you click Apply.
-6. For the **Name** tab (Tab 5) and **BPM** tab (Tab 4), edit values inline if needed
+   - **Multi-select:** Shift-click or ⌘-click to highlight multiple rows, then click any checkbox to apply that state to all highlighted rows (or press Space to toggle).
+   - **Skip Selected:** removes checked rows from the table without applying changes — useful for dismissing findings you've reviewed but don't want to act on.
+6. For the **Name Cleanup** tab (Tab 5) and **BPM Detection** tab (Tab 7), edit values inline if needed
 7. Click **Apply Selected** — a live `X / Y files` counter and current filename are shown while applying
 
 Leave the **Fast scan** checkbox on for fast scans. Uncheck it to force a full re-scan.
@@ -88,7 +89,7 @@ uv run python -m s4converter.cli --full-scan
 
 ## The Tabs
 
-### Tab 0 — Sync
+### Tab 1 — Sync
 Copies new and updated files from Mac source folders to USB. The tracker (`.s4_sync.json`) records source-file identity (path + mtime + size) so that files already converted or renamed by this app are never re-copied — it's source-centric, so USB-side reorganisation is transparent.
 
 - **NEW** — file exists on source but was never synced
@@ -96,17 +97,44 @@ Copies new and updated files from Mac source folders to USB. The tracker (`.s4_s
 - **MOVED** — file disappeared from one source path, appeared at another with the same filename + size. Default action: duplicate the existing USB file to the new path (preserving any conversions), then ask whether to delete the old USB copy
 - **DELETED** — file removed from source; starts unchecked — never auto-deleted from USB
 
-Configure sync pairs in `config.json` under `sync_pairs`. Hover a pair label to see its full source → USB mapping.
+Configure sync pairs in `config.json` under `sync_pairs`. Hover a pair label to see its full source → USB mapping. Use **Configure Pairs…** to add or edit pairs from within the app.
 
 **Register Existing…** — one-time setup if your USB already has files from a previous transfer. Scans both source and USB, registers files found on USB as synced. Run this once; afterwards just use Scan or ⚡ Sync + Convert.
 
-### Tab 1 — Wav Format
-Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC) and WAV files at the wrong sample rate or bit depth, and converts everything to **48 kHz / 16-bit WAV** in a single pass. Originals are deleted on success (configurable via `delete_original` in `config.json`).
+### Tab 2 — Wav Format
+Finds non-WAV files (MP3, AIFF, FLAC, M4A, OGG, WMA, ALAC, MP4) and WAV files at the wrong sample rate or bit depth, and converts everything to **48 kHz / 16-bit WAV** in a single pass. Originals are deleted on success (configurable via `delete_original` in `config.json`). Audio-bearing MP4s are converted here; video-only or empty MP4 files are left for File Cleanup.
 
-### Tab 2 — Silence Remover
+### Tab 3 — Silence Remover
 Trims leading and trailing silence from WAV files using ffmpeg's `silencedetect` filter. Both threshold (default −60 dBFS) and minimum duration (default 0.1 s) are configurable in `config.json`. Stem exports from DAWs commonly have 30–60 seconds of leading silence — this removes it in one pass.
 
-### Tab 4 — Fake Stereo to Mono
+### Tab 4 — File Cleanup
+Two passes in one tab:
+
+**Folder Collapse** — finds folders that contain exactly one subfolder and nothing else, and moves the subfolder's contents up one level. Example: `Drums/Kicks/kick.wav` → `Drums/kick.wav` (empty `Kicks/` folder is deleted). Sorted deepest-first so nested collapses work in a single pass.
+
+**Junk File Deletion** — finds non-audio files that accumulate on USB drives (`.DS_Store`, `.asd`, `.pkf`, Ableton analysis, etc.) and removes them. Remaining MP4 shells after Wav Format conversion are also caught here.
+
+### Tab 5 — Name Cleanup
+Three passes in one tab, run in priority order so renames from earlier passes are in place before later ones evaluate:
+
+**BPM Relabel** — finds WAV files with a bare number in the filename that looks like a BPM but is missing the `bpm` label (e.g. `120_kick.wav` → `120bpm_kick.wav`). Smart filters prevent false positives:
+- Decade/possessive suffixes (`90's`) are skipped
+- Decimal/float numbers (GPS coordinates, version numbers like `135.77`) are skipped
+- Folders where all flagged numbers form a consecutive sequence (61, 62 … 81) are auto-dismissed as sample-pack track indices
+- Use **Not BPM** to permanently suppress individual rows from future scans
+
+**Non-ASCII** — finds filenames containing non-English characters (Chinese, Japanese, Korean, accented Latin, Cyrillic, etc.) and suggests ASCII transliterations so the S-4 can read them:
+- Chinese → pinyin without tones (e.g. `踢鼓_Loop` → `tigu_Loop`)
+- Accented Latin → stripped accent (e.g. `Café` → `Cafe`)
+- All other scripts → best-effort ASCII via unidecode
+
+**Long Prefix / Long Filenames** — scans every subfolder for shared filename prefixes and offers to strip them. Also flags files with stems longer than the limit (default 70 chars).
+- **Detected Prefix** column — what the scan found; double-click to correct
+- **Edit** column — leave empty to strip the prefix only; type a replacement to prepend after stripping (e.g. `Caribou140-` to rename `Shared_Kick.wav` → `Caribou140-Kick.wav`)
+
+Running prefix removal first often brings long names under the limit automatically.
+
+### Tab 6 — Fake Stereo to Mono
 Detects "fake stereo" files and converts them to mono, saving ~50% file size per file.
 - `dual_mono` (L−R diff ≤ −90 dB) — selected by default
 - `one_side` (one channel > 40 dB louder) — selected by default
@@ -115,10 +143,8 @@ Detects "fake stereo" files and converts them to mono, saving ~50% file size per
 
 Enable **Loose mode** to also surface near-mono files (listed but unchecked — review carefully).
 
-### Tab 5 — BPM
+### Tab 7 — BPM Detection
 Detects BPM for rhythmic loops using `aubio` and renames files with a `{bpm}bpm_` prefix (e.g. `120bpm_my_loop.wav`). Having BPM in the filename in this format enables proper sync-mode loading in DISC.
-
-Also scans for files that already have a bare number prefix but are missing the `bpm` label (e.g. `120_kick.wav` → `120bpm_kick.wav`). These are auto-selected and shown at the top of the results.
 
 Multiple filters prevent false positives on one-shots and recordings:
 - Duration gate (skips files outside `bpm_min_duration`–`bpm_max_duration`)
@@ -129,29 +155,6 @@ Multiple filters prevent false positives on one-shots and recordings:
 
 **High-confidence detections (≥ 0.75) are checked by default.** Medium and low confidence results are shown but unchecked — review before selecting.
 
-### Tab 3 — Name
-Four passes in one tab:
-
-**Folder Collapse** — finds folders that contain exactly one subfolder and nothing else, and moves the subfolder's contents up one level. Example: `Drums/Kicks/kick.wav` → `Drums/kick.wav` (empty `Kicks/` folder is deleted). Sorted deepest-first so nested collapses work in a single pass.
-
-**Prefix Removal** — scans every subfolder for shared filename prefixes and offers to strip them.
-Example: `Loopmasters - Dubstep Pack 2024 - Kick 01.wav` → `Kick 01.wav`.
-
-The table has two editable columns:
-- **Detected Prefix** — what the scan found; double-click to correct it. This is the string that gets stripped.
-- **New Name (opt.)** — leave empty to just strip the prefix. Type a replacement string to prepend it after stripping. Example: enter `Caribou140-` to rename `Shared_Kick.wav` → `Caribou140-Kick.wav`.
-
-**Long Filenames** — finds files with stems longer than the limit (default 70 chars) and suggests shorter alternatives. Edit the suggested name in the New Name column.
-
-**Non-ASCII** — finds filenames containing non-English characters (Chinese, Japanese, Korean, accented Latin, Cyrillic, etc.) and suggests ASCII transliterations so the S-4 can read them:
-- Chinese → pinyin without tones (e.g. `踢鼓_Loop` → `tigu_Loop`)
-- Accented Latin → stripped accent (e.g. `Café` → `Cafe`)
-- All other scripts → best-effort ASCII via unidecode
-
-Review the suggested name in the New Name column and edit before applying if needed.
-
-Running prefix removal first often brings long names under the limit automatically.
-
 ---
 
 ## How the Speed Optimizations Work
@@ -159,10 +162,10 @@ Running prefix removal first often brings long names under the limit automatical
 ### Probe Cache (`.s4_cache.json` in your samples folder)
 Every ffprobe result is cached by `path|mtime|size`. If a file hasn't changed, we never re-probe it. This is the biggest win on a large drive.
 
-### Folder Markers (`.s4_processed` hidden file per folder)
-After a successful scan + apply pass, each folder gets a marker file. On the next incremental scan, folders where nothing is newer than the marker are skipped entirely — no walking, no probing.
+### Per-Phase Folder Markers (`.s4_phase{N}` hidden files per folder)
+After a successful scan + apply pass, each phase writes its own marker file (e.g. `.s4_phase1` for Wav Format, `.s4_phase5` for Name Cleanup). On the next fast scan, a folder is skipped for a given phase only if that phase's own marker is present and nothing in the folder is newer.
 
-The marker is automatically invalidated whenever a file in the folder is renamed or converted, so the next scan will re-check it.
+Phases are fully independent — a Wav Format scan completing does not block Name Cleanup from re-visiting the same folder. Invalidation (rename, conversion, or sync copy) removes all phase markers at once, so every phase will re-check the folder.
 
 ### When to use `--full-scan`
 - After moving files around in Finder (markers may not reflect reality)

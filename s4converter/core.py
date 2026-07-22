@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import unicodedata
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -110,6 +111,7 @@ def is_hidden_or_appledouble(p: Path) -> bool:
 
 
 def iter_files(base_dir: Path, skip_clean_folders: bool = False,
+               phase: Optional[int] = None,
                extensions: Optional[set] = None,
                folder_cb: Optional[Callable[[str], None]] = None) -> Iterator[Path]:
     base_dir = base_dir.resolve()
@@ -119,11 +121,11 @@ def iter_files(base_dir: Path, skip_clean_folders: bool = False,
         root_path = Path(root)
         if folder_cb:
             folder_cb(str(root_path))
-        if skip_clean_folders and FolderMarkers.is_folder_clean(root_path, extensions):
+        if skip_clean_folders and phase is not None and FolderMarkers.is_folder_clean(root_path, phase, extensions):
             dirs.clear()  # don't recurse into subdirs of clean folders
             continue
         for name in files:
-            if name == config.FOLDER_MARKER_NAME:
+            if name.startswith(".s4_"):
                 continue
             p = root_path / name
             if is_hidden_or_appledouble(p):
@@ -279,10 +281,10 @@ def check_drive_present(base_dir: Path) -> bool:
     return base_dir.exists() and base_dir.is_dir()
 
 
-def _propagate_ancestor_markers(base_dir: Path, seed_folders) -> None:
+def _propagate_ancestor_markers(base_dir: Path, seed_folders, phase: int) -> None:
     """Mark seed_folders and all their ancestors up to (not including) base_dir.
 
-    Writes/refreshes .s4_processed markers so that iter_files with
+    Writes/refreshes .s4_phase{N} markers so that iter_files with
     skip_clean_folders can fire dirs.clear() at the highest level possible,
     making subsequent fast scans traverse only the folders that actually changed.
 
@@ -294,10 +296,10 @@ def _propagate_ancestor_markers(base_dir: Path, seed_folders) -> None:
     for folder in list(seed_folders):
         if folder == base_dir:
             continue  # never mark the drive root
-        FolderMarkers.mark_folder(folder)
+        FolderMarkers.mark_folder(folder, phase)
         parent = folder.parent
         while parent != base_dir and parent not in visited:
-            FolderMarkers.mark_folder(parent)
+            FolderMarkers.mark_folder(parent, phase)
             visited.add(parent)
             parent = parent.parent
 
@@ -330,50 +332,20 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
         if file_cb:
             file_cb(path)
 
-    all_candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions=all_exts,
-                                     folder_cb=_folder_cb))
+    all_candidates = list(iter_files(base_dir, skip_clean_folders=only_new, phase=1,
+                                     extensions=all_exts, folder_cb=_folder_cb))
 
     if not all_candidates:
         # All leaf folders were already marked clean; iter_files skipped them all.
         # Propagate markers up to the first level below base_dir so the next fast
         # scan fires dirs.clear() at the top-level pair folders and returns in <1s.
-        if only_new and cache is not None and _visited_folders:
-            _propagate_ancestor_markers(base_dir, set(_visited_folders))
+        if only_new and _visited_folders:
+            _propagate_ancestor_markers(base_dir, set(_visited_folders), phase=1)
         return findings
 
-    # Skip files already confirmed clean by a previous scan or apply.
-    if cache is not None:
-        needs_probe = [p for p in all_candidates if not cache.is_phase_done(p, 1)]
-
-        # For folders where every candidate file is already phase-done, write a
-        # folder marker so that iter_files (with skip_clean_folders) skips them
-        # on the next scan entirely — avoiding 270k+ stat() calls on USB.
-        if len(needs_probe) < len(all_candidates):
-            probe_folders = {p.parent for p in needs_probe}
-            clean_folders = {p.parent for p in all_candidates} - probe_folders
-            for folder in clean_folders:
-                FolderMarkers.mark_folder(folder)
-
-            # If EVERYTHING was clean, also mark all ancestor folders up to
-            # base_dir so the next fast scan can skip from the root level.
-            # Include _visited_folders so that top-level folders whose entire
-            # subtree was already leaf-marked (e.g. Download Samples when all
-            # its leaf folders have markers) also get propagated — they appear
-            # in _visited_folders even though none of their files are in
-            # clean_folders (iter_files skips their leaves via existing markers).
-            if not needs_probe:
-                _propagate_ancestor_markers(
-                    base_dir, clean_folders | set(_visited_folders)
-                )
-    else:
-        needs_probe = all_candidates
-
-    if not needs_probe:
-        return findings
-    candidates = needs_probe
-
-    results   = parallel_ffprobe(candidates, cache, progress_cb, file_cb=file_cb, stop_event=stop_event)
+    results   = parallel_ffprobe(all_candidates, cache, progress_cb, file_cb=file_cb, stop_event=stop_event)
     target_sr = int(config.FORCE_AR)
+    folder_has_findings: set = set()
 
     for path, info in results:
         if info is None:
@@ -391,13 +363,11 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                 target="48000 Hz, 16-bit WAV",
                 extra={"type": "non_wav"},
             ))
+            folder_has_findings.add(path.parent)
         else:
             wrong_sr   = info.sample_rate != target_sr
             wrong_bits = info.bits != 16
             if not wrong_sr and not wrong_bits:
-                # Already correct format — mark so we skip it next time.
-                if cache is not None:
-                    cache.mark_phase_done(path, 1)
                 continue
             parts = []
             if wrong_sr:   parts.append(f"{info.sample_rate} Hz → 48000 Hz")
@@ -409,24 +379,22 @@ def scan_phase_1(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                 target="48000 Hz, 16-bit",
                 extra={"type": "wav_format"},
             ))
+            folder_has_findings.add(path.parent)
+
+    visited_folders = {p.parent for p in all_candidates}
+    clean_folders   = visited_folders - folder_has_findings
+    if not folder_has_findings:
+        # Everything is clean — safe to propagate markers up the ancestor chain
+        # so the next fast scan can skip entire subtrees in one check.
+        _propagate_ancestor_markers(
+            base_dir, clean_folders | set(_visited_folders), phase=1
+        )
+    else:
+        for folder in clean_folders:
+            FolderMarkers.mark_folder(folder, phase=1)
 
     return findings
 
-
-def get_apply_output_path(finding: Finding) -> Optional[Path]:
-    """Return the path of the output file after a successful apply_phase_N.
-
-    Used by ApplyWorker to mark the output as phase-done in the cache.
-    Returns None for rename-only phases (2, 3, 6) where the output path
-    depends on user-edited values not available here.
-    """
-    if finding.phase == 1:
-        if finding.extra.get("type") == "non_wav":
-            return finding.path.with_suffix(".wav")
-        return finding.path  # converted in-place
-    if finding.phase in (4, 5):
-        return finding.path  # converted in-place
-    return None  # phases 2, 3, 6 are renames — path changes
 
 
 def apply_phase_1(finding: Finding) -> bool:
@@ -500,9 +468,7 @@ def scan_phase_2(folder: Path, cache: Optional[ProbeCache] = None) -> Optional[F
         return None
     try:
         files = [f for f in folder.iterdir()
-                 if f.is_file() and not is_hidden_or_appledouble(f)
-                 and f.name != config.FOLDER_MARKER_NAME
-                 and not (cache and cache.is_phase_done(f, 2))]
+                 if f.is_file() and not is_hidden_or_appledouble(f)]
     except OSError:
         return None
     if len(files) < config.MIN_GROUP_SIZE:
@@ -526,7 +492,6 @@ def scan_phase_2(folder: Path, cache: Optional[ProbeCache] = None) -> Optional[F
 
 def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
                    replacement_prefix: Optional[str] = None,
-                   cache: Optional[ProbeCache] = None,
                    log_cb: Optional[callable] = None) -> int:
     prefix = override_prefix if override_prefix is not None else finding.extra.get("prefix", "")
     if not prefix:
@@ -580,8 +545,6 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
             continue
         try:
             p.rename(new_path)
-            if cache:
-                cache.mark_phase_done(new_path, 2)
             count += 1
         except OSError as e:
             if log_cb:
@@ -603,11 +566,12 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
         dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
                    and not d.startswith(".")]
         root_path = Path(root)
-        if only_new and FolderMarkers.is_folder_clean(root_path):
+        if only_new and FolderMarkers.is_folder_clean(root_path, 2):
             continue
         folders.append(root_path)
 
     findings: List[Finding] = []
+    folders_with_findings: set = set()
     for i, folder in enumerate(folders, 1):
         if stop_event and stop_event.is_set():
             break
@@ -615,9 +579,13 @@ def scan_phase_2_all(base_dir: Path, only_new: bool = False,
             progress_cb(i, len(folders))
         if file_cb:
             file_cb(str(folder))
-        finding = scan_phase_2(folder, cache=cache)
+        finding = scan_phase_2(folder)
         if finding:
             findings.append(finding)
+            folders_with_findings.add(folder)
+
+    for folder in set(folders) - folders_with_findings:
+        FolderMarkers.mark_folder(folder, phase=2)
     return findings
 
 
@@ -633,9 +601,13 @@ def scan_long_prefix(
     for root, dirs, _ in os.walk(base_dir):
         dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
                    and not d.startswith(".")]
-        folders.append(Path(root))
+        root_path = Path(root)
+        if only_new and FolderMarkers.is_folder_clean(root_path, 2):
+            continue
+        folders.append(root_path)
 
     findings: List[Finding] = []
+    folders_with_findings: set = set()
     total = len(folders)
     for i, folder in enumerate(folders, 1):
         if stop_event and stop_event.is_set():
@@ -649,7 +621,6 @@ def scan_long_prefix(
             all_files = [
                 f for f in folder.iterdir()
                 if f.is_file() and not is_hidden_or_appledouble(f)
-                and f.name != config.FOLDER_MARKER_NAME
             ]
         except OSError:
             continue
@@ -689,7 +660,10 @@ def scan_long_prefix(
                 "type": "long_prefix",
             },
         ))
+        folders_with_findings.add(folder)
 
+    for folder in set(folders) - folders_with_findings:
+        FolderMarkers.mark_folder(folder, phase=2)
     if progress_cb:
         progress_cb(total, total)
     return findings
@@ -728,8 +702,9 @@ def scan_phase_3(base_dir: Path, only_new: bool = False,
                  file_cb: Optional[Callable[[str], None]] = None,
                  stop_event=None,
                  ) -> List[Finding]:
-    findings  = []
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new))
+    findings             = []
+    folder_has_findings: set = set()
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=3))
     total     = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -747,6 +722,9 @@ def scan_phase_3(base_dir: Path, only_new: bool = False,
                 suggested_name=suggestions[0] if suggestions else "",
                 extra={"suggestions": suggestions},
             ))
+            folder_has_findings.add(path.parent)
+    for folder in {p.parent for p in all_files} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=3)
     if progress_cb:
         progress_cb(total, total)
     return findings
@@ -786,7 +764,8 @@ def scan_phase_8(
     delete the now-empty child folder. Findings are sorted deepest-first
     so that nested collapses apply correctly in a single pass.
     """
-    findings = []
+    findings             = []
+    folders_with_findings: set = set()
     folders: List[Path] = []
     for root, dirs, _ in os.walk(base_dir):
         dirs[:] = [d for d in dirs
@@ -794,7 +773,7 @@ def scan_phase_8(
         root_path = Path(root)
         if root_path == base_dir:
             continue  # never collapse into root
-        if only_new and FolderMarkers.is_folder_clean(root_path):
+        if only_new and FolderMarkers.is_folder_clean(root_path, 8):
             continue
         folders.append(root_path)
 
@@ -827,7 +806,10 @@ def scan_phase_8(
             target=loc,
             extra={"child": child.name, "child_path": str(child), "child_count": child_count},
         ))
+        folders_with_findings.add(folder)
 
+    for folder in set(folders) - folders_with_findings:
+        FolderMarkers.mark_folder(folder, phase=8)
     findings.sort(key=lambda f: len(f.path.parts), reverse=True)
     if progress_cb:
         progress_cb(total, total)
@@ -871,10 +853,9 @@ def scan_junk_files(
     stop_event=None,
 ) -> List[Finding]:
     """Find files with extensions in JUNK_EXTENSIONS."""
-    findings = []
-    # Never skip folders for junk scanning — folder markers are shared across phases
-    # so a folder "cleaned" by Wav Format would otherwise hide junk files inside it.
-    all_files = list(iter_files(base_dir, skip_clean_folders=False,
+    findings             = []
+    folder_has_findings: set = set()
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=9,
                                 extensions=JUNK_EXTENSIONS))
     total = len(all_files)
     for i, path in enumerate(all_files):
@@ -897,6 +878,9 @@ def scan_junk_files(
                 savings_bytes=size,
                 extra={"ext": path.suffix.lower()},
             ))
+            folder_has_findings.add(path.parent)
+    for folder in {p.parent for p in all_files} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=9)
     if progress_cb:
         progress_cb(total, total)
     return findings
@@ -1037,15 +1021,14 @@ def scan_phase_4(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  file_cb: Optional[Callable[[str], None]] = None,
                  stop_event=None,
                  ) -> List[Finding]:
-    findings   = []
-    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
+    findings             = []
+    folder_has_findings: set = set()
+    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, phase=4, extensions={".wav"}))
     if not candidates:
         return findings
 
     probe_results = parallel_ffprobe(candidates, cache, progress_cb=None, file_cb=file_cb, stop_event=stop_event)
     stereo_files  = [p for p, info in probe_results if info is not None and info.channels == 2]
-    if not stereo_files:
-        return findings
 
     max_bytes = config.ANALYSIS_MAX_SIZE_MB * 1024 * 1024 if config.ANALYSIS_MAX_SIZE_MB > 0 else None
 
@@ -1105,6 +1088,9 @@ def scan_phase_4(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                    "peak_r_db": analysis.peak_r_db,
                    "max_diff_db": analysis.max_diff_db},
         ))
+        folder_has_findings.add(path.parent)
+    for folder in {p.parent for p in candidates} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=4)
     return findings
 
 
@@ -1183,8 +1169,9 @@ def scan_phase_5(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  file_cb: Optional[Callable[[str], None]] = None,
                  stop_event=None,
                  ) -> List[Finding]:
-    findings   = []
-    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
+    findings             = []
+    folder_has_findings: set = set()
+    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, phase=5, extensions={".wav"}))
     if not candidates:
         return findings
 
@@ -1228,6 +1215,9 @@ def scan_phase_5(base_dir: Path, cache: ProbeCache, only_new: bool = False,
             savings_bytes=savings,
             extra={"lead": lead, "trail": trail, "duration": duration},
         ))
+        folder_has_findings.add(path.parent)
+    for folder in {p.parent for p in candidates} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=5)
     return findings
 
 
@@ -1375,6 +1365,7 @@ def scan_bpm_relabel(
     progress_cb: Optional[Callable[[int, int], None]] = None,
     file_cb: Optional[Callable[[str], None]] = None,
     stop_event=None,
+    cache: Optional[ProbeCache] = None,
 ) -> List[Finding]:
     """Find WAV files with a bare BPM number (anywhere in the stem) and suggest
     inserting the 'bpm' label so the S-4 recognises it.
@@ -1382,11 +1373,17 @@ def scan_bpm_relabel(
     Matches numbers 60–220 that appear standalone (not glued to letters) and
     are not already followed by 'bpm'.  Track numbers like '13' are ignored
     because they fall outside the BPM range.
+
+    Folders where the candidate numbers form a consecutive integer sequence
+    (e.g. 61, 62, … 81) are silently skipped — those are sample-pack track
+    indices, not BPMs.  Files the user has explicitly marked via
+    cache.mark_bpm_relabel_reviewed() are also skipped permanently.
     """
-    findings = []
-    # Always scan all folders — folder markers from Wav Format must not hide
-    # files whose BPM hasn't been labelled yet.
-    all_files = list(iter_files(base_dir, skip_clean_folders=False, extensions={".wav"}))
+    findings: List[Finding] = []
+    # Phase 10 is the marker ID for BPM relabel — distinct from phase 6 (BPM
+    # detection) so the two scans don't interfere even though both are phase=6
+    # in their Finding objects.
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=10, extensions={".wav"}))
     total = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -1395,6 +1392,9 @@ def scan_bpm_relabel(
             progress_cb(i, total)
         if file_cb:
             file_cb(str(path))
+        # Skip files the user has permanently dismissed as "not a BPM".
+        if cache is not None and cache.is_bpm_relabel_reviewed(path):
+            continue
         stem = path.stem
         # Skip files that already carry a proper 'bpm' label.
         if _BPM_LABELED_RE.search(stem):
@@ -1416,6 +1416,12 @@ def scan_bpm_relabel(
                 # Already "138bpm" — the _BPM_LABELED_RE above should have caught this,
                 # but skip to be safe.
                 continue
+            if after.startswith("'"):
+                # Decade/possessive suffix like "90's" — not a BPM.
+                continue
+            if re.match(r'\.\d', after):
+                # Decimal number like a GPS coordinate (e.g. "135.7744…") — not a BPM.
+                continue
             # Bare number with no 'bpm' at all → insert it directly after the number.
             candidate = (m, num, stem[:m.end()] + 'bpm' + after)
             break
@@ -1431,6 +1437,34 @@ def scan_bpm_relabel(
             selected=True,
             extra={"bpm": num, "conf_label": "—", "duration": None, "type": "relabel"},
         ))
+
+    # Post-filter: folders where ALL candidate numbers form a perfect consecutive
+    # sequence (step = 1, ≥ 4 files) are almost certainly sample-pack track
+    # indices, not BPMs.  Silently drop them and mark those folders clean.
+    by_folder: dict = defaultdict(list)
+    for f in findings:
+        by_folder[f.path.parent].append(f)
+
+    dirty_folders: set = set()
+    filtered: List[Finding] = []
+    for folder, flist in by_folder.items():
+        nums = sorted(f.extra["bpm"] for f in flist)
+        is_sequential = (
+            len(nums) >= 4
+            and nums[-1] - nums[0] == len(nums) - 1
+            and all(nums[i + 1] - nums[i] == 1 for i in range(len(nums) - 1))
+        )
+        if is_sequential:
+            FolderMarkers.mark_folder(folder, phase=10)
+        else:
+            filtered.extend(flist)
+            dirty_folders.add(folder)
+    findings = filtered
+
+    # Mark every scanned folder that ended up with no findings.
+    for folder in {p.parent for p in all_files} - dirty_folders:
+        FolderMarkers.mark_folder(folder, phase=10)
+
     if progress_cb:
         progress_cb(total, total)
     return findings
@@ -1442,8 +1476,9 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
                  stop_event=None,
                  ) -> List[Finding]:
     """Detect BPM for WAV files that appear to be rhythmic loops."""
-    findings   = []
-    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, extensions={".wav"}))
+    findings             = []
+    folder_has_findings: set = set()
+    candidates = list(iter_files(base_dir, skip_clean_folders=only_new, phase=6, extensions={".wav"}))
     if not candidates:
         return findings
 
@@ -1505,7 +1540,10 @@ def scan_phase_6(base_dir: Path, cache: ProbeCache, only_new: bool = False,
             extra={"bpm": bpm_val, "confidence": confidence,
                    "conf_label": conf_label, "duration": info.duration},
         ))
+        folder_has_findings.add(path.parent)
 
+    for folder in {p.parent for p in candidates} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=6)
     return findings
 
 
@@ -1602,10 +1640,9 @@ def scan_phase_7(
     stop_event=None,
 ) -> List[Finding]:
     """Flag files with non-ASCII stems and suggest romanized alternatives."""
-    findings = []
-    # Always walk all folders — folder markers from other phases (e.g. Wav Format)
-    # must not hide files that still have non-ASCII names.
-    all_files = list(iter_files(base_dir, skip_clean_folders=False))
+    findings             = []
+    folder_has_findings: set = set()
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=7))
     total = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -1638,6 +1675,9 @@ def scan_phase_7(
             target=romanized,
             extra={"non_ascii": non_ascii},
         ))
+        folder_has_findings.add(path.parent)
+    for folder in {p.parent for p in all_files} - folder_has_findings:
+        FolderMarkers.mark_folder(folder, phase=7)
     if progress_cb:
         progress_cb(total, total)
     return findings
@@ -1784,7 +1824,7 @@ def mark_folders_processed(base_dir: Path) -> int:
     for root, dirs, _ in os.walk(base_dir):
         dirs[:] = [d for d in dirs if d not in config.EXCLUDED_FOLDER_NAMES
                    and not d.startswith(".")]
-        FolderMarkers.mark_folder(Path(root))
+        FolderMarkers.mark_folder(Path(root), phase=1)
         count += 1
     return count
 

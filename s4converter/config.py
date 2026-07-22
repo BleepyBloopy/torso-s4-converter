@@ -51,7 +51,6 @@ def cache_root_for(path: Path) -> Path:
             pass
     return path
 
-FOLDER_MARKER_NAME = ".s4_processed"
 CACHE_FILE_NAME    = ".s4_cache.json"
 LOG_FILE_NAME      = ".s4_converter.log"
 

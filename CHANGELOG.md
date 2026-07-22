@@ -2,6 +2,71 @@
 
 ---
 
+## [v8.0] – 2026-07-22
+
+### Added
+- **Per-phase folder markers** (major architecture change) — replaced the single `.s4_processed` shared marker with per-phase markers `.s4_phase1`–`.s4_phase10`. Each scan phase reads and writes only its own marker; phases no longer interfere. Example: Wav Format completing no longer blocks Name Cleanup from seeing the same folder on a fast scan.
+  - `ALL_MARKER_PHASES = {1…10}` — phase 10 is the marker ID for `scan_bpm_relabel`, keeping it separate from phase 6 (BPM Detection) even though both produce `Finding.phase = 6`
+  - Migration: phase 1 falls back to legacy `.s4_processed` so existing USB drives don't need a forced full rescan
+  - `is_folder_clean` slow path now also checks direct subdirectory mtimes — previously only files were checked, causing newly synced subfolders to be missed when the parent marker was still fresh
+  - `invalidate(folder)` removes all phase markers and the legacy `.s4_processed`
+- **BPM Relabel — sequential number filter** — after collecting candidates, `scan_bpm_relabel` groups them by folder. Any folder where all flagged numbers form a perfect consecutive integer sequence (e.g. 61, 62 … 81) with ≥ 4 files is silently dropped and its folder marked clean. Those are sample-pack track indices, not BPMs.
+- **BPM Relabel — apostrophe filter** — numbers immediately followed by `'` (e.g. `90's`) are skipped; these are decade/possessive references.
+- **BPM Relabel — decimal/float filter** — numbers immediately followed by `.digit` (e.g. `135.7744` in GPS coordinates) are skipped.
+- **"Not BPM" button** in Name Cleanup tab — highlight any BPM Relabel rows and click "Not BPM" to permanently suppress those files from future BPM Relabel scans. Stored in ProbeCache as `bpm_relabel_skip|{path}`. Files are still scanned by Long Prefix and Non-ASCII passes.
+- **Multi-select checkbox toggle** in all findings tables — `ExtendedSelection` mode is now explicit; clicking one checkbox in a multi-row selection propagates the same state to all selected rows instantly. Space key also toggles all highlighted rows at once.
+- **Sync — ancestor marker invalidation** (`_invalidate_ancestors` in `sync.py`) — when Sync copies a file to a USB path, phase markers are removed from every ancestor directory up to the pair root so the next fast scan descends into the newly synced subtree instead of being blocked by a stale parent marker.
+
+### Changed
+- **Removed per-file "done" flags** — `mark_phase_done` / `is_phase_done` removed from `ProbeCache`. Folder markers (fast-scan layer) and the per-file audio analysis cache (ffprobe cache) together cover the same ground; the done-flag layer was redundant.
+- **Column resize** — all findings table columns are now fully interactive (draggable). The "Path" column was incorrectly locked as `Stretch`, preventing resize and causing inverted drag behavior in adjacent columns.
+
+### Fixed
+- **Sync+Convert tooltip stuck as "Click Load to load the drive first"** even after the drive was loaded — the normal description was only set in the error branch.
+
+---
+
+## [v7.11] – 2026-07-18 – 2026-07-21
+
+### Added
+- **File Cleanup tab** (Tab 4) — new dedicated tab for Folder Collapse (`scan_phase_8`) and Junk File Deletion (`scan_junk_files`). Previously folder collapse lived in the Name tab. Both operations now have their own "Open Folder" button column.
+- **Name Cleanup tab** (Tab 5) — successor to the old Name tab. Combines BPM Relabel (`scan_bpm_relabel`, runs first), Non-ASCII romanization (`scan_phase_7`), and Long Prefix removal (`scan_long_prefix` — covers both prefix detection and long-name shortening). Running BPM relabel first means BPM renames are in place before prefix evaluation.
+- **MP4 support** — `scan_phase_1` detects audio-bearing `.mp4` files and converts them to 48 kHz / 16-bit WAV. Remaining (video-only or empty) `.mp4` files are flagged in File Cleanup for deletion.
+- **Skip Selected button** — all processing tabs gain a "Skip Selected" button next to Apply. Checked rows are removed from the table without applying any changes — useful for dismissing findings you've reviewed but don't want to act on yet.
+- **Column sort** — clicking any column header sorts the findings table; a second click reverses; a third click resets to scan order. Sort arrow shown in header. Size column sorts numerically.
+- **Cascade cleanup progress** — applying File Cleanup (folder collapse) shows the current file path in the status label during cascaded multi-level collapses.
+- **Long Prefix detection in Name Cleanup** — `scan_long_prefix` added to the Name Cleanup scan, combining the old separate prefix scan and long-filename scan into one integrated pass.
+
+### Changed
+- **7-tab layout** — new order: 1. Sync → 2. Wav Format → 3. Silence Remover → 4. File Cleanup → 5. Name Cleanup → 6. Fake Stereo to Mono → 7. BPM Detection
+- **Unified column format** — all processing tabs now share the same `["Path", "File", …]` column layout with a consistent row-number column and Open Folder button where applicable.
+- **S4_DISPLAY_LIMIT** default lowered from 49 → 45 characters to match observed S-4 truncation.
+
+### Fixed
+- `scan_junk_files` now respects the fast-scan (only_new) flag and folder markers instead of always doing a full walk.
+- `apply_phase_8` failure when the single-child folder contained only hidden files (e.g. `.DS_Store`) — now uses `shutil.rmtree` instead of `rmdir` to clean up.
+- Failed Apply items now logged by full path rather than just filename, making them easier to locate.
+- `scan_bpm_relabel` now detects BPM numbers anywhere in the stem (not just at the start) and correctly collapses spaced-BPM format (`138 BPM` → `138bpm`).
+- Name Cleanup: BPM-labeled filenames are now protected from prefix stripping (a `120bpm_` prefix is not an "album prefix"). Non-ASCII letter filter corrected. Fast-scan marker no longer blocks Name Cleanup from re-visiting folders that Wav Format just processed.
+
+---
+
+## [v7.10] – 2026-07-09
+
+### Added
+- **Sync tab — Configure Pairs dialog** — pair source/USB paths now visible directly in the tab; a "Configure Pairs…" button opens an inline editor to add, remove, and reorder sync pairs without editing `config.json` manually.
+
+### Changed
+- **Folder marker performance** — `is_folder_clean` now uses the directory's own `mtime` as a fast-path O(1) check; per-file stat walk is only triggered when the directory has changed. Marker propagation walks up the ancestor chain after a clean all-folders pass, so the second scan of a large drive is near-instant.
+
+### Fixed
+- Sync tab action buttons (Scan, Copy, Sync+Convert) now correctly require a USB drive to be loaded before enabling — previously they could fire without a valid USB path.
+- Sync scan progress now reports across all pairs in aggregate rather than resetting per pair.
+- USB mount check loosened to the drive root rather than the exact configured subfolder — prevents false "not mounted" errors when scanning a subdirectory.
+- Folder marker propagation now correctly reaches top-level pair folders.
+
+---
+
 ## [v7.9] – 2026-07-09
 
 ### Added

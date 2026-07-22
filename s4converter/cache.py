@@ -3,21 +3,28 @@
 Two caching mechanisms:
 1. ffprobe cache (JSON file): stores audio metadata keyed by path+mtime+size.
    Skips re-probing unchanged files - the biggest perf win.
-2. Folder markers (.s4_processed files): mark folders as fully processed,
-   so we can skip walking into them entirely.
+2. Per-phase folder markers (.s4_phase{N} files): each scan phase writes its own
+   marker so fast-scans can skip folders already confirmed clean for that phase.
 """
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 from . import config
 
+# Marker phase IDs.  scan_bpm_relabel uses 10 to avoid colliding with
+# scan_phase_6 (BPM detection), even though both produce Finding.phase=6.
+ALL_MARKER_PHASES = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+
+_LEGACY_MARKER = ".s4_processed"   # old shared marker — migrated to .s4_phase1
+
 
 class ProbeCache:
     """In-memory + on-disk cache for ffprobe results.
-    
+
     Key format: 'path|mtime|size' - any change invalidates the entry.
     """
 
@@ -49,26 +56,6 @@ class ProbeCache:
             return
         self._data[key] = probe_data
         self._dirty = True
-
-    def mark_phase_done(self, path: Path, phase: int) -> None:
-        """Record that this file was successfully processed by phase N.
-
-        Keyed by path+mtime+size so the flag auto-invalidates if the file
-        is later replaced or modified externally.
-        """
-        key = self._key(path)
-        if key is None:
-            return
-        self._data[f"done|{phase}|{key}"] = True
-        self._dirty = True
-
-    def is_phase_done(self, path: Path, phase: int) -> bool:
-        """Return True if this file was previously processed by phase N
-        and has not changed since (same mtime+size)."""
-        key = self._key(path)
-        if key is None:
-            return False
-        return bool(self._data.get(f"done|{phase}|{key}"))
 
     def load(self) -> None:
         if self.cache_file.exists():
@@ -108,34 +95,53 @@ class ProbeCache:
     def size(self) -> int:
         return len(self._data)
 
+    def mark_bpm_relabel_reviewed(self, path: Path) -> None:
+        """Permanently suppress a file from BPM Relabel scan results."""
+        self._data[f"bpm_relabel_skip|{path}"] = True
+        self._dirty = True
+
+    def is_bpm_relabel_reviewed(self, path: Path) -> bool:
+        return bool(self._data.get(f"bpm_relabel_skip|{path}"))
+
 
 class FolderMarkers:
-    """Manage per-folder .s4_processed markers."""
+    """Per-phase folder markers (.s4_phase{N}).
+
+    Each scan phase writes its own marker file after confirming a folder is
+    clean.  Phases only read their own marker — no cross-phase coupling.
+    invalidate() removes all markers so any apply always triggers a full
+    re-scan by every phase on the next run.
+    """
 
     @staticmethod
-    def get_marker_path(folder: Path) -> Path:
-        return folder / config.FOLDER_MARKER_NAME
+    def _marker_path(folder: Path, phase: int) -> Path:
+        return folder / f".s4_phase{phase}"
 
     @staticmethod
-    def get_marker_time(folder: Path) -> float:
-        """Return mtime of marker, or 0 if no marker exists."""
-        marker = FolderMarkers.get_marker_path(folder)
-        if marker.exists():
-            try:
-                return marker.stat().st_mtime
-            except OSError:
-                return 0.0
-        return 0.0
+    def is_folder_clean(folder: Path, phase: int, exts: Optional[set] = None) -> bool:
+        """Return True if this phase's marker exists AND no file in folder is newer.
 
-    @staticmethod
-    def is_folder_clean(folder: Path, exts: Optional[set] = None) -> bool:
-        """Return True if marker exists AND no file in folder is newer than marker.
-
+        For phase 1 only: falls back to the legacy .s4_processed marker so
+        existing USB drives benefit immediately without a full re-scan.
         Note: only checks direct files in `folder`, not subfolders.
         Accounts for FAT32's 2-second mtime resolution.
         """
-        marker_time = FolderMarkers.get_marker_time(folder)
-        if marker_time == 0:
+        marker = FolderMarkers._marker_path(folder, phase)
+        marker_time = 0.0
+        if marker.exists():
+            try:
+                marker_time = marker.stat().st_mtime
+            except OSError:
+                return False
+        elif phase == 1:
+            legacy = folder / _LEGACY_MARKER
+            if legacy.exists():
+                try:
+                    marker_time = legacy.stat().st_mtime
+                except OSError:
+                    return False
+
+        if marker_time == 0.0:
             return False
 
         threshold = marker_time + config.FAT32_MTIME_TOLERANCE
@@ -149,39 +155,49 @@ class FolderMarkers:
         except OSError:
             return False
 
-        # Slow path: directory changed — check individual files.
+        # Slow path: directory changed — check files and direct subdirs.
+        # Subdirectory mtimes must be checked too: a newly synced subfolder
+        # has no files directly in the parent, so a file-only check would
+        # incorrectly report the parent as clean.
         try:
             for entry in folder.iterdir():
-                if entry.is_file() and entry.name != config.FOLDER_MARKER_NAME:
-                    if exts and entry.suffix.lower() not in exts:
-                        continue
-                    try:
+                if entry.name.startswith(".s4_"):
+                    continue
+                try:
+                    if entry.is_dir():
                         if entry.stat().st_mtime > threshold:
                             return False
-                    except OSError:
-                        return False
+                    elif entry.is_file():
+                        if exts and entry.suffix.lower() not in exts:
+                            continue
+                        if entry.stat().st_mtime > threshold:
+                            return False
+                except OSError:
+                    return False
         except OSError:
             return False
         return True
 
     @staticmethod
-    def mark_folder(folder: Path) -> None:
-        """Drop a marker file with current timestamp."""
-        marker = FolderMarkers.get_marker_path(folder)
+    def mark_folder(folder: Path, phase: int) -> None:
+        """Touch this phase's marker with current timestamp."""
+        marker = FolderMarkers._marker_path(folder, phase)
         try:
             marker.touch(exist_ok=True)
-            # Force mtime to now (in case touch didn't update it)
             now = time.time()
-            import os
             os.utime(marker, (now, now))
         except OSError:
             pass
 
     @staticmethod
     def invalidate(folder: Path) -> None:
-        """Remove the marker - forces re-scan next time."""
-        marker = FolderMarkers.get_marker_path(folder)
+        """Remove ALL phase markers — forces every phase to re-scan next time."""
+        for phase in ALL_MARKER_PHASES:
+            try:
+                FolderMarkers._marker_path(folder, phase).unlink(missing_ok=True)
+            except OSError:
+                pass
         try:
-            marker.unlink(missing_ok=True)
+            (folder / _LEGACY_MARKER).unlink(missing_ok=True)
         except OSError:
             pass

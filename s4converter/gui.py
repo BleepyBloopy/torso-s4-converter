@@ -121,10 +121,6 @@ class ApplyWorker(QObject):
                 if result:
                     ok += 1
                     touched_folders.add(Path(f.path).parent)
-                    if self.cache is not None:
-                        out = core.get_apply_output_path(f)
-                        if out is not None and out.exists():
-                            self.cache.mark_phase_done(out, f.phase)
                 else:
                     fail += 1
                     self.failed_findings.append(f)
@@ -287,17 +283,22 @@ class FindingsTable(QTableWidget):
         self._sort_key_map: dict = {}           # id(finding) → list of string sort keys
         self._post_render_fn = None             # called after every _rebuild_display()
 
+        self._rebuilding = False    # True during _rebuild_display — suppresses itemChanged
+        self._propagating = False   # True while we're bulk-setting checkboxes
+
         self.setColumnCount(len(self.columns))
         self.setHorizontalHeaderLabels(self.columns)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
         self.setEditTriggers(
             QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.SelectedClicked
             if self._editable_cols else QTableWidget.EditTrigger.NoEditTriggers
         )
+        self.itemChanged.connect(self._on_item_changed)
 
     def set_findings(self, findings: List[core.Finding], row_builder):
         """row_builder(finding) -> list of strings (one per non-checkbox column)."""
@@ -314,6 +315,7 @@ class FindingsTable(QTableWidget):
         """Render the current self.findings[:CAP] into the table."""
         display = self.findings[:_TABLE_DISPLAY_CAP]
 
+        self._rebuilding = True
         self.setUpdatesEnabled(False)
         self.setSortingEnabled(False)
         self.setRowCount(len(display))
@@ -331,6 +333,7 @@ class FindingsTable(QTableWidget):
                 self.setItem(row, col, item)
 
         self.setUpdatesEnabled(True)
+        self._rebuilding = False
         if display:
             # Cap each column at 35% of viewport width so long paths can't push
             # other columns off screen. Last column is always left to stretch.
@@ -427,13 +430,53 @@ class FindingsTable(QTableWidget):
             return ""
 
     def select_all(self, checked: bool):
+        self._propagating = True
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         for row in range(self.rowCount()):
-            self.item(row, 0).setCheckState(
-                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-            )
+            self.item(row, 0).setCheckState(state)
+        self._propagating = False
         # Also update hidden findings beyond the cap.
         for f in self.findings[_TABLE_DISPLAY_CAP:]:
             f.selected = checked
+
+    def _on_item_changed(self, item):
+        """When user clicks one checkbox in a multi-row selection, apply to all selected rows."""
+        if self._rebuilding or self._propagating or item.column() != 0:
+            return
+        selected_rows = {idx.row() for idx in self.selectedIndexes()}
+        if item.row() not in selected_rows or len(selected_rows) <= 1:
+            return
+        new_state = item.checkState()
+        self._propagating = True
+        for row in selected_rows:
+            if row == item.row():
+                continue
+            chk = self.item(row, 0)
+            if chk:
+                chk.setCheckState(new_state)
+        self._propagating = False
+
+    def keyPressEvent(self, event):
+        """Space toggles the Apply checkbox for all currently highlighted rows."""
+        if event.key() == Qt.Key.Key_Space:
+            rows = sorted({idx.row() for idx in self.selectedIndexes()})
+            if rows:
+                # Check all if any are unchecked; otherwise uncheck all.
+                any_unchecked = any(
+                    self.item(r, 0) is not None
+                    and self.item(r, 0).checkState() == Qt.CheckState.Unchecked
+                    for r in rows
+                )
+                new_state = Qt.CheckState.Checked if any_unchecked else Qt.CheckState.Unchecked
+                self._propagating = True
+                for r in rows:
+                    chk = self.item(r, 0)
+                    if chk:
+                        chk.setCheckState(new_state)
+                self._propagating = False
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 # ============================================================================
@@ -835,7 +878,6 @@ class Phase1Tab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(["Path", "File", "Issue", "Current", "Target", "Size"])
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         return table
 
     def row_builder(self, f):
@@ -888,14 +930,8 @@ class FileCleanupTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(["Open Folder", "Type", "Path", "File", "Detail", "Size"])
-        table.horizontalHeader().setStretchLastSection(False)
-        table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Fixed
-        )
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(1, 36)
-        table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
         return table
 
     def on_scan_done(self, findings):
@@ -1009,36 +1045,50 @@ class NameCleanupTab(PhaseTab):
                 f"  Edit the 'Edit' column to correct the detected prefix before applying.\n\n"
                 "BPM Relabel — finds WAV files whose names start with a bare number\n"
                 "  that looks like a BPM but is missing the 'bpm' label.\n"
-                "  Example: '120_kick.wav' → '120bpm_kick.wav'\n\n"
+                "  Example: '120_kick.wav' → '120bpm_kick.wav'\n"
+                "  Folders where numbers are a strict consecutive sequence (e.g. 61, 62 … 81)\n"
+                "  are auto-skipped as sample-pack track indices.\n"
+                "  Use 'Not BPM' to permanently dismiss individual files that are not loops.\n\n"
                 "Non-ASCII — finds filenames with non-English characters and suggests\n"
                 "  ASCII transliterations so the S-4 can read them:\n"
                 "  • Chinese → pinyin (e.g. 踢鼓 → tigu)\n"
                 "  • Accented Latin → stripped accent (e.g. Café → Cafe)\n\n"
                 "Edit the 'Edit' column to customise any value before applying.\n"
                 "For Long Prefix rows, the edit field holds the prefix to strip.\n"
-                "For BPM / Non-ASCII rows, it holds the full new filename."
+                "For BPM / Non-ASCII rows, it holds the full new filename.\n\n"
+                "Tip: highlight rows with Shift-click or ⌘-click, then press Space\n"
+                "  to toggle their Apply checkbox in bulk."
             ),
         )
+        # "Not BPM" button — inserted after Select None in the toolbar.
+        self.not_bpm_btn = QPushButton("Not BPM")
+        self.not_bpm_btn.setToolTip(
+            "Mark highlighted BPM Relabel rows as reviewed.\n"
+            "They will be permanently excluded from future BPM Relabel scans\n"
+            "(but still show up in Long Prefix / Non-ASCII passes)."
+        )
+        self.not_bpm_btn.setEnabled(False)
+        self.not_bpm_btn.clicked.connect(self._on_not_bpm)
+        toolbar = self.layout().itemAt(1).layout()
+        toolbar.insertWidget(3, self.not_bpm_btn)
 
     def build_table(self):
         table = FindingsTable(
             ["Open Folder", "Type", "File / Folder", "Detail", "Edit"],
             editable_col=5,
         )
-        table.horizontalHeader().setStretchLastSection(False)
-        table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Fixed
-        )
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(1, 36)
-        table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
         return table
 
     def on_scan_done(self, findings):
         super().on_scan_done(findings)
         self.table._post_render_fn = self._add_open_buttons
         self._add_open_buttons()
+        has_relabel = any(
+            f.phase == 6 and f.extra.get("type") == "relabel" for f in findings
+        )
+        self.not_bpm_btn.setEnabled(has_relabel)
 
     def _add_open_buttons(self):
         import subprocess as _sp
@@ -1054,6 +1104,49 @@ class NameCleanupTab(PhaseTab):
                 lambda checked=False, p=reveal_path: _sp.Popen(["open", "-R", p])
             )
             self.table.setCellWidget(row, 1, btn)
+
+    def _on_not_bpm(self):
+        """Permanently suppress highlighted BPM Relabel rows from future scans."""
+        cache = self.main_window.cache
+        if cache is None:
+            return
+        rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
+        if not rows:
+            QMessageBox.information(
+                self, "Nothing highlighted",
+                "Highlight rows first (click / Shift-click / ⌘-click), then click Not BPM."
+            )
+            return
+        to_dismiss = [
+            self.table.findings[r]
+            for r in rows
+            if r < len(self.table.findings)
+            and self.table.findings[r].phase == 6
+            and self.table.findings[r].extra.get("type") == "relabel"
+        ]
+        if not to_dismiss:
+            QMessageBox.information(
+                self, "No BPM Relabel rows",
+                "None of the highlighted rows are BPM Relabel findings."
+            )
+            return
+        for f in to_dismiss:
+            cache.mark_bpm_relabel_reviewed(f.path)
+        cache.save()
+        dismiss_ids = {id(f) for f in to_dismiss}
+        new_findings = [f for f in self.findings if id(f) not in dismiss_ids]
+        self.findings = new_findings
+        self.table.set_findings(new_findings, self.row_builder)
+        n = len(new_findings)
+        cap_note = (
+            f" (showing first {_TABLE_DISPLAY_CAP:,} — all included in Apply)"
+            if n > _TABLE_DISPLAY_CAP else ""
+        )
+        self.count_label.setText(f"{n:,} findings{cap_note}")
+        has_relabel = any(
+            f.phase == 6 and f.extra.get("type") == "relabel" for f in new_findings
+        )
+        self.not_bpm_btn.setEnabled(has_relabel)
 
     def row_builder(self, f):
         if f.phase == 2:
@@ -1073,6 +1166,7 @@ class NameCleanupTab(PhaseTab):
     def scan_fn(self):
         base     = self.main_window.base_dir
         only_new = self.main_window.only_new
+        cache    = self.main_window.cache
 
         def combined(base_dir, only_new, progress_cb=None, file_cb=None, stop_event=None):
             n_phases = 3
@@ -1085,7 +1179,7 @@ class NameCleanupTab(PhaseTab):
             cb = phase_cb if progress_cb else None
             # Priority order: BPM relabeling → non-ASCII romanization → long prefix strip.
             # Apply runs in scan order, so BPM renames happen before prefix evaluation.
-            findings = core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event)
+            findings = core.scan_bpm_relabel(base_dir, only_new, cb, file_cb, stop_event, cache=cache)
             phase_idx[0] = 1
             if not (stop_event and stop_event.is_set()):
                 findings += core.scan_phase_7(base_dir, only_new, cb, file_cb, stop_event)
@@ -1120,7 +1214,6 @@ class NameCleanupTab(PhaseTab):
                 return bool(core.apply_phase_2(
                     finding,
                     override_prefix=edited or None,
-                    cache=cache,
                     log_cb=lambda msg: log(f"[{self.title}] {msg}"),
                 ))
             if finding.phase == 6:
@@ -1176,7 +1269,6 @@ class SilenceTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(["Path", "File", "Lead silence", "Trail silence", "Savings", "Size"])
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         return table
 
     def row_builder(self, f):
@@ -1226,7 +1318,6 @@ class StereoMonoTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(["Path", "File", "Classification", "Savings", "Size"])
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         return table
 
     def row_builder(self, f):
@@ -1292,7 +1383,6 @@ class Phase6Tab(PhaseTab):
             ["Path", "File", "BPM", "Confidence", "Duration", "New Name (editable)"],
             editable_col=6,
         )
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         return table
 
     def row_builder(self, f):
@@ -1699,8 +1789,9 @@ class SyncTab(QWidget):
             "One-time setup: if your USB already has files from a previous transfer, "
             "scan source + USB to register what's already there. "
             "New files added to the Mac after this point will appear on the next Scan.")
-        if tip:
-            self.sync_convert_btn.setToolTip(tip)
+        self.sync_convert_btn.setToolTip(tip or
+            "Scan for new files, copy them all to USB, then immediately run the "
+            "Wav Format scan so everything is ready in one step.")
 
     def _refresh_pair_labels(self) -> None:
         tracker = self.main_window.sync_tracker
