@@ -1177,7 +1177,7 @@ class NameCleanupTab(PhaseTab):
                 f"  Example: 'Lurka - Lurka Sample Pack - 18 LurkaKick.wav'\n"
                 f"    prefix detected: 'Lurka - Lurka Sample Pack - '\n"
                 f"    result: '18 LurkaKick.wav'\n"
-                f"  Edit the 'Edit' column to correct the detected prefix before applying.\n\n"
+                f"  Edit the 'Detail / Edit' column to correct the detected prefix before applying.\n\n"
                 "BPM Relabel — finds WAV files whose names start with a bare number\n"
                 "  that looks like a BPM but is missing the 'bpm' label.\n"
                 "  Example: '120_kick.wav' → '120bpm_kick.wav'\n"
@@ -1188,7 +1188,7 @@ class NameCleanupTab(PhaseTab):
                 "  ASCII transliterations so the S-4 can read them:\n"
                 "  • Chinese → pinyin (e.g. 踢鼓 → tigu)\n"
                 "  • Accented Latin → stripped accent (e.g. Café → Cafe)\n\n"
-                "Edit the 'Edit' column to customise any value before applying.\n"
+                "Edit the 'Detail / Edit' column to customise any value before applying.\n"
                 "For Long Prefix rows, the edit field holds the prefix to strip.\n"
                 "For BPM / Non-ASCII rows, it holds the full new filename.\n\n"
                 "Tip: highlight rows with Shift-click or ⌘-click, then press Space\n"
@@ -1209,11 +1209,13 @@ class NameCleanupTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(
-            ["Open Folder", "Type", "File / Folder", "Detail", "Edit"],
+            ["Open Folder", "Path", "Type", "File / Folder", "Detail / Edit"],
             editable_col=5,
         )
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(1, 36)
+        table.setColumnWidth(2, 260)  # Path
+        table.setColumnWidth(3, 100)  # Type
         return table
 
     def on_scan_done(self, findings):
@@ -1282,15 +1284,13 @@ class NameCleanupTab(PhaseTab):
             prefix = f.extra.get("prefix", f.current)
             n_long = f.extra.get("n_long", 0)
             n_total = f.extra.get("n_total", 0)
-            try:    loc = str(f.path.relative_to(self.main_window.base_dir))
-            except ValueError: loc = str(f.path)
-            return ["", "Long Prefix", loc,
-                    f"{n_long} of {n_total} files too long — strip prefix",
+            return ["", str(f.path), "Long Prefix",
+                    f"{n_long} of {n_total} files too long",
                     prefix]
         elif f.phase == 6:
-            return ["", "BPM Relabel", f.current, f"→ {f.target}", f.target]
+            return ["", str(f.path.parent), "BPM Relabel", f.current, f.target]
         else:
-            return ["", "Non-ASCII", f.current, f"→ {f.target}", f.target]
+            return ["", str(f.path.parent), "Non-ASCII", f.current, f.target]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
