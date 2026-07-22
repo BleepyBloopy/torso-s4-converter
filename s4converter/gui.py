@@ -521,6 +521,7 @@ class FindingsTable(QTableWidget):
         self._sync_page_to_flags()
         self._current_page = n
         self._rebuild_display()
+        self.scrollToTop()
         self._update_pagination_bar()
         if self._post_render_fn:
             self._post_render_fn()
