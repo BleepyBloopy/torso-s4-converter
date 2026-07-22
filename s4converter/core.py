@@ -1442,7 +1442,13 @@ def scan_bpm_relabel(
             current=path.name,
             target=new_name,
             selected=True,
-            extra={"bpm": num, "conf_label": "—", "duration": None, "type": "relabel"},
+            extra={
+                "bpm": num,
+                "bpm_prefix": stem[:m.start()],  # text before the number, used for prefix-group sequential check
+                "conf_label": "—",
+                "duration": None,
+                "type": "relabel",
+            },
         ))
 
     # Post-filter 1: folders where any number was zero-padded — every number in
@@ -1450,16 +1456,19 @@ def scan_bpm_relabel(
     if leading_zero_folders:
         findings = [f for f in findings if f.path.parent not in leading_zero_folders]
 
-    # Post-filter 2: folders where ALL candidate numbers form a perfect consecutive
-    # sequence (step = 1, ≥ 4 files) are almost certainly sample-pack track
-    # indices, not BPMs.  Silently drop them and mark those folders clean.
-    by_folder: dict = defaultdict(list)
+    # Post-filter 2: prefix-group sequential check.
+    # Groups findings by (folder, stem-prefix-before-the-number) and drops any
+    # group whose numbers form a perfect consecutive sequence (step=1, ≥4 files).
+    # This handles flat multi-type packs like Vengeance where "VFOB2 CL Hihat 60–96"
+    # and "VFOB2 Kick 60–96" share a folder — the folder-level check would see 333
+    # pooled numbers and fail, but each prefix group is cleanly sequential.
+    by_prefix: dict = defaultdict(list)
     for f in findings:
-        by_folder[f.path.parent].append(f)
+        key = (f.path.parent, f.extra.get("bpm_prefix", ""))
+        by_prefix[key].append(f)
 
-    dirty_folders: set = set()
-    filtered: List[Finding] = []
-    for folder, flist in by_folder.items():
+    sequential_ids: set = set()
+    for (_folder, _prefix), flist in by_prefix.items():
         nums = sorted(f.extra["bpm"] for f in flist)
         is_sequential = (
             len(nums) >= 4
@@ -1467,10 +1476,14 @@ def scan_bpm_relabel(
             and all(nums[i + 1] - nums[i] == 1 for i in range(len(nums) - 1))
         )
         if is_sequential:
-            FolderMarkers.mark_folder(folder, phase=10)
-        else:
-            filtered.extend(flist)
-            dirty_folders.add(folder)
+            sequential_ids.update(id(f) for f in flist)
+
+    dirty_folders: set = set()
+    filtered: List[Finding] = []
+    for f in findings:
+        if id(f) not in sequential_ids:
+            filtered.append(f)
+            dirty_folders.add(f.path.parent)
     findings = filtered
 
     # Mark every scanned folder that ended up with no findings.
