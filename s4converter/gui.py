@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import List, Optional
 
 try:
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
+    from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal, QObject
     from PyQt6.QtGui import QFont, QTextCursor
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QLineEdit, QFileDialog, QTabWidget,
@@ -1209,36 +1210,79 @@ class NameCleanupTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(
-            ["Open Folder", "Path", "Type", "File / Folder", "Detail / Edit"],
-            editable_col=5,
+            ["Open Folder", "▶", "Path", "Type", "File / Folder", "Size", "Detail / Edit"],
+            editable_col=7,
         )
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(1, 36)
-        table.setColumnWidth(2, 260)  # Path
-        table.setColumnWidth(3, 100)  # Type
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(1, 36)   # Open Folder button
+        table.setColumnWidth(2, 36)   # Play button
+        table.setColumnWidth(3, 260)  # Path
+        table.setColumnWidth(4, 100)  # Type
+        table.setColumnWidth(6, 72)   # Size
         return table
 
     def on_scan_done(self, findings):
         super().on_scan_done(findings)
-        self.table._post_render_fn = self._add_open_buttons
-        self._add_open_buttons()
+        self.table._post_render_fn = self._add_row_widgets
+        self._add_row_widgets()
         has_relabel = any(
             f.phase == 6 and f.extra.get("type") == "relabel" for f in findings
         )
         self.not_bpm_btn.setEnabled(has_relabel)
 
-    def _add_open_buttons(self):
+    def _add_row_widgets(self):
         import subprocess as _sp
+        mw = self.main_window
+        current_src = mw._player.source().toLocalFile() if mw._playing_btn is not None else ""
         for row, f in enumerate(self.table.page_findings()):
+            # Col 1: Open Folder button
             reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
-            btn = QPushButton("📂")
-            btn.setFlat(True)
-            btn.setFixedSize(32, 24)
-            btn.setToolTip(reveal_path)
-            btn.clicked.connect(
+            open_btn = QPushButton("📂")
+            open_btn.setFlat(True)
+            open_btn.setFixedSize(32, 24)
+            open_btn.setToolTip(reveal_path)
+            open_btn.clicked.connect(
                 lambda checked=False, p=reveal_path: _sp.Popen(["open", "-R", p])
             )
-            self.table.setCellWidget(row, 1, btn)
+            self.table.setCellWidget(row, 1, open_btn)
+
+            # Col 2: Play button (files only — Long Prefix findings are directories)
+            if f.path.is_file():
+                is_playing = current_src == str(f.path)
+                play_btn = QPushButton("⏹" if is_playing else "▶")
+                play_btn.setFlat(True)
+                play_btn.setFixedSize(32, 24)
+                play_btn.setToolTip(f.path.name)
+                play_btn.clicked.connect(
+                    lambda checked=False, btn=play_btn, p=f.path: self._toggle_preview(btn, p)
+                )
+                if is_playing:
+                    mw._playing_btn = play_btn  # update reference after page navigation
+                self.table.setCellWidget(row, 2, play_btn)
+
+    def _toggle_preview(self, btn, path):
+        mw = self.main_window
+        current_src = mw._player.source().toLocalFile()
+        if current_src == str(path):
+            if mw._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                mw._player.stop()
+            else:
+                mw._player.play()
+                btn.setText("⏹")
+                mw._playing_btn = btn
+            return
+        # Switch to a different file
+        if mw._playing_btn is not None:
+            try:
+                mw._playing_btn.setText("▶")
+            except RuntimeError:
+                pass
+        mw._playing_btn = None
+        mw._player.setSource(QUrl.fromLocalFile(str(path)))
+        mw._player.play()
+        btn.setText("⏹")
+        mw._playing_btn = btn
 
     def _on_not_bpm(self):
         """Permanently suppress highlighted BPM Relabel rows from future scans."""
@@ -1279,18 +1323,31 @@ class NameCleanupTab(PhaseTab):
         )
         self.not_bpm_btn.setEnabled(has_relabel)
 
+    @staticmethod
+    def _fmt_size(path) -> str:
+        try:
+            sz = path.stat().st_size
+            if sz >= 1_048_576:
+                return f"{sz / 1_048_576:.1f} MB"
+            return f"{sz / 1024:.0f} KB"
+        except OSError:
+            return "—"
+
     def row_builder(self, f):
         if f.phase == 2:
             prefix = f.extra.get("prefix", f.current)
             n_long = f.extra.get("n_long", 0)
             n_total = f.extra.get("n_total", 0)
-            return ["", str(f.path), "Long Prefix",
+            # col1=open, col2=play(n/a for folders), col3=path, col4=type, col5=file/folder, col6=size, col7=edit
+            return ["", "", str(f.path), "Long Prefix",
                     f"{n_long} of {n_total} files too long",
-                    prefix]
+                    "—", prefix]
         elif f.phase == 6:
-            return ["", str(f.path.parent), "BPM Relabel", f.current, f.target]
+            return ["", "", str(f.path.parent), "BPM Relabel",
+                    f.current, self._fmt_size(f.path), f.target]
         else:
-            return ["", str(f.path.parent), "Non-ASCII", f.current, f.target]
+            return ["", "", str(f.path.parent), "Non-ASCII",
+                    f.current, self._fmt_size(f.path), f.target]
 
     def scan_fn(self):
         base     = self.main_window.base_dir
@@ -2327,6 +2384,13 @@ class MainWindow(QMainWindow):
         self._report_thread: Optional[QThread] = None
         self.sync_tracker = sync.SyncTracker()
 
+        # Shared audio preview player (one at a time across all tabs).
+        self._player = QMediaPlayer(self)
+        self._audio_out = QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_out)
+        self._playing_btn: Optional[QPushButton] = None
+        self._player.playbackStateChanged.connect(self._on_playback_state_changed)
+
         self._build_ui()
         self._load_default_dir()
 
@@ -2651,6 +2715,14 @@ class MainWindow(QMainWindow):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_view.appendPlainText(f"[{ts}] {msg}")
 
+    def _on_playback_state_changed(self, state):
+        if state == QMediaPlayer.PlaybackState.StoppedState and self._playing_btn is not None:
+            try:
+                self._playing_btn.setText("▶")
+            except RuntimeError:
+                pass  # widget destroyed after page navigation
+            self._playing_btn = None
+
     def closeEvent(self, event):
         if self._busy:
             reply = QMessageBox.warning(
@@ -2667,6 +2739,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self._stop_caffeinate()
+        self._player.stop()
         if self.cache:
             self.cache.save()
             self.log("Cache saved.")
