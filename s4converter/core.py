@@ -1385,6 +1385,9 @@ def scan_bpm_relabel(
     # in their Finding objects.
     all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=10, extensions={".wav"}))
     total = len(all_files)
+    # Folders where any file has a zero-padded number (067, 082, …) — the whole
+    # folder is treated as zero-padded sample indices, not BPMs.
+    leading_zero_folders: set = set()
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
             break
@@ -1404,6 +1407,10 @@ def scan_bpm_relabel(
         for m in _BPM_STANDALONE_RE.finditer(stem):
             num = int(m.group(1))
             if num not in _BPM_RELABEL_RANGE:
+                continue
+            if m.group(1)[0] == '0':
+                # Zero-padded index (067, 082, …) — mark whole folder as indexed pack.
+                leading_zero_folders.add(path.parent)
                 continue
             after = stem[m.end():]
             spaced = _BPM_SPACED_RE.match(after)
@@ -1438,7 +1445,12 @@ def scan_bpm_relabel(
             extra={"bpm": num, "conf_label": "—", "duration": None, "type": "relabel"},
         ))
 
-    # Post-filter: folders where ALL candidate numbers form a perfect consecutive
+    # Post-filter 1: folders where any number was zero-padded — every number in
+    # that folder is a sample index regardless of its own leading digit.
+    if leading_zero_folders:
+        findings = [f for f in findings if f.path.parent not in leading_zero_folders]
+
+    # Post-filter 2: folders where ALL candidate numbers form a perfect consecutive
     # sequence (step = 1, ≥ 4 files) are almost certainly sample-pack track
     # indices, not BPMs.  Silently drop them and mark those folders clean.
     by_folder: dict = defaultdict(list)
