@@ -239,9 +239,6 @@ class ReportWorker(QObject):
 # Findings table widget
 # ============================================================================
 
-_TABLE_DISPLAY_CAP = 5000
-
-
 def _parse_size_for_sort(s: str) -> float:
     """Parse a human-readable size string like '444.01 KB' into bytes for numeric sort."""
     parts = s.strip().split()
@@ -286,6 +283,14 @@ class FindingsTable(QTableWidget):
         self._rebuilding = False    # True during _rebuild_display — suppresses itemChanged
         self._propagating = False   # True while we're bulk-setting checkboxes
 
+        # Pagination state.
+        self._current_page: int = 0
+        self._edits: dict = {}              # id(finding) → editable-col text (cross-page cache)
+        self._page_bar_widget = None        # set by make_pagination_bar()
+        self._prev_btn = None
+        self._next_btn = None
+        self._page_label = None
+
         self.setColumnCount(len(self.columns))
         self.setHorizontalHeaderLabels(self.columns)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -300,6 +305,8 @@ class FindingsTable(QTableWidget):
         )
         self.itemChanged.connect(self._on_item_changed)
 
+    _PAGE_SIZE = 1000
+
     def set_findings(self, findings: List[core.Finding], row_builder):
         """row_builder(finding) -> list of strings (one per non-checkbox column)."""
         self._row_builder = row_builder
@@ -308,12 +315,15 @@ class FindingsTable(QTableWidget):
         self._sort_col = None
         self._sort_asc = True
         self._sort_key_map = {}
+        self._current_page = 0
+        self._edits = {}
         self.setHorizontalHeaderLabels(self.columns)  # reset any sort arrows
         self._rebuild_display()
+        self._update_pagination_bar()
 
     def _rebuild_display(self):
-        """Render the current self.findings[:CAP] into the table."""
-        display = self.findings[:_TABLE_DISPLAY_CAP]
+        """Render the current page of findings into the table."""
+        display = self.page_findings()
 
         self._rebuilding = True
         self.setUpdatesEnabled(False)
@@ -400,20 +410,9 @@ class FindingsTable(QTableWidget):
         self._rebuild_display()
 
     def get_selected_findings(self) -> List[core.Finding]:
-        selected = []
-        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
-        # Sync checkbox state for visible rows.
-        for row in range(displayed):
-            f = self.findings[row]
-            checked = self.item(row, 0).checkState() == Qt.CheckState.Checked
-            f.selected = checked
-            if checked:
-                selected.append(f)
-        # Hidden rows (beyond cap) keep their default selected state.
-        for f in self.findings[displayed:]:
-            if f.selected:
-                selected.append(f)
-        return selected
+        # Sync current page's checkboxes (and editable cols) to finding objects.
+        self._sync_page_to_flags()
+        return [f for f in self.findings if f.selected]
 
     def get_edit_value(self, finding: core.Finding) -> str:
         if self.editable_col is None:
@@ -421,23 +420,31 @@ class FindingsTable(QTableWidget):
         return self.get_col_value(finding, self.editable_col)
 
     def get_col_value(self, finding: core.Finding, col: int) -> str:
+        # Try the currently displayed page first (live table values).
+        page_f = self.page_findings()
         try:
-            row = self.findings.index(finding)
-            if row >= _TABLE_DISPLAY_CAP:
-                return ""
-            return self.item(row, col).text()
-        except (ValueError, AttributeError):
-            return ""
+            page_row = page_f.index(finding)
+            item = self.item(page_row, col)
+            return item.text() if item else ""
+        except ValueError:
+            pass
+        # Finding is on a different page — use the edits cache.
+        if col == self.editable_col:
+            return self._edits.get(id(finding), "")
+        return ""
 
     def select_all(self, checked: bool):
+        # Update every finding's flag first (all pages).
+        for f in self.findings:
+            f.selected = checked
+        # Reflect in current page's checkboxes.
         self._propagating = True
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         for row in range(self.rowCount()):
-            self.item(row, 0).setCheckState(state)
+            chk = self.item(row, 0)
+            if chk:
+                chk.setCheckState(state)
         self._propagating = False
-        # Also update hidden findings beyond the cap.
-        for f in self.findings[_TABLE_DISPLAY_CAP:]:
-            f.selected = checked
 
     def _on_item_changed(self, item):
         """When user clicks one checkbox in a multi-row selection, apply to all selected rows."""
@@ -477,6 +484,114 @@ class FindingsTable(QTableWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------
+    # Pagination
+    # ------------------------------------------------------------------
+
+    def page_count(self) -> int:
+        if not self.findings:
+            return 1
+        return max(1, (len(self.findings) + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
+
+    def page_start(self) -> int:
+        return self._current_page * self._PAGE_SIZE
+
+    def page_end(self) -> int:
+        return min(self.page_start() + self._PAGE_SIZE, len(self.findings))
+
+    def page_findings(self) -> List[core.Finding]:
+        return self.findings[self.page_start():self.page_end()]
+
+    def _sync_page_to_flags(self):
+        """Persist current page's checkbox + editable-col state to finding objects."""
+        for row, f in enumerate(self.page_findings()):
+            chk = self.item(row, 0)
+            if chk:
+                f.selected = (chk.checkState() == Qt.CheckState.Checked)
+            if self.editable_col is not None:
+                edit_item = self.item(row, self.editable_col)
+                if edit_item:
+                    self._edits[id(f)] = edit_item.text()
+
+    def go_to_page(self, n: int):
+        n = max(0, min(n, self.page_count() - 1))
+        if n == self._current_page:
+            return
+        self._sync_page_to_flags()
+        self._current_page = n
+        self._rebuild_display()
+        self._update_pagination_bar()
+        if self._post_render_fn:
+            self._post_render_fn()
+
+    def select_page(self, checked: bool):
+        """Select / deselect only the findings on the current page."""
+        self._propagating = True
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row, f in enumerate(self.page_findings()):
+            chk = self.item(row, 0)
+            if chk:
+                chk.setCheckState(state)
+            f.selected = checked
+        self._propagating = False
+
+    def _update_pagination_bar(self):
+        if self._page_bar_widget is None:
+            return
+        pc = self.page_count()
+        has_pages = pc > 1
+        self._page_bar_widget.setVisible(has_pages)
+        if not has_pages:
+            return
+        p = self._current_page
+        start = self.page_start() + 1
+        end = self.page_end()
+        total = len(self.findings)
+        self._page_label.setText(
+            f"Page {p + 1} of {pc}  ({start:,}–{end:,} of {total:,})"
+        )
+        self._prev_btn.setEnabled(p > 0)
+        self._next_btn.setEnabled(p < pc - 1)
+
+    def make_pagination_bar(self, parent=None) -> "QWidget":
+        """Create and return a pagination bar widget wired to this table."""
+        bar = QWidget(parent)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(2, 2, 2, 2)
+        row.setSpacing(6)
+
+        self._prev_btn = QPushButton("← Prev")
+        self._prev_btn.setFixedWidth(72)
+        self._prev_btn.clicked.connect(lambda: self.go_to_page(self._current_page - 1))
+        row.addWidget(self._prev_btn)
+
+        self._page_label = QLabel("Page 1 of 1")
+        self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self._page_label)
+
+        self._next_btn = QPushButton("Next →")
+        self._next_btn.setFixedWidth(72)
+        self._next_btn.clicked.connect(lambda: self.go_to_page(self._current_page + 1))
+        row.addWidget(self._next_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        row.addWidget(sep)
+
+        select_page_btn = QPushButton("Select Page")
+        select_page_btn.setToolTip(
+            "Check all findings on this page only.\n"
+            "Use Select All in the toolbar to check every page."
+        )
+        select_page_btn.clicked.connect(lambda: self.select_page(True))
+        row.addWidget(select_page_btn)
+
+        row.addStretch()
+        self._page_bar_widget = bar
+        bar.setVisible(False)
+        return bar
 
 
 # ============================================================================
@@ -575,6 +690,7 @@ class PhaseTab(QWidget):
 
         self.table = self.build_table()
         layout.addWidget(self.table)
+        layout.addWidget(self.table.make_pagination_bar(self))
 
     def build_table(self) -> FindingsTable:
         raise NotImplementedError
@@ -630,12 +746,7 @@ class PhaseTab(QWidget):
         self.findings = findings
         self.table.set_findings(findings, self.row_builder)
         n = len(findings)
-        if n > _TABLE_DISPLAY_CAP:
-            self.count_label.setText(
-                f"{n} findings  (showing first {_TABLE_DISPLAY_CAP} — all included in Apply)"
-            )
-        else:
-            self.count_label.setText(f"{n} findings")
+        self.count_label.setText(f"{n:,} findings")
         self.progress.setVisible(False)
         self._status.setVisible(False)
         self._current_file_label.setVisible(False)
@@ -941,9 +1052,7 @@ class FileCleanupTab(PhaseTab):
 
     def _add_open_buttons(self):
         import subprocess as _sp
-        displayed = min(len(self.table.findings), _TABLE_DISPLAY_CAP)
-        for row in range(displayed):
-            f = self.table.findings[row]
+        for row, f in enumerate(self.table.page_findings()):
             reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
             btn = QPushButton("📂")
             btn.setFlat(True)
@@ -1092,9 +1201,7 @@ class NameCleanupTab(PhaseTab):
 
     def _add_open_buttons(self):
         import subprocess as _sp
-        displayed = min(len(self.table.findings), _TABLE_DISPLAY_CAP)
-        for row in range(displayed):
-            f = self.table.findings[row]
+        for row, f in enumerate(self.table.page_findings()):
             reveal_path = str(f.path if f.path.is_dir() else f.path.parent)
             btn = QPushButton("📂")
             btn.setFlat(True)
@@ -1117,12 +1224,13 @@ class NameCleanupTab(PhaseTab):
                 "Highlight rows first (click / Shift-click / ⌘-click), then click Not BPM."
             )
             return
+        page_f = self.table.page_findings()
         to_dismiss = [
-            self.table.findings[r]
+            page_f[r]
             for r in rows
-            if r < len(self.table.findings)
-            and self.table.findings[r].phase == 6
-            and self.table.findings[r].extra.get("type") == "relabel"
+            if r < len(page_f)
+            and page_f[r].phase == 6
+            and page_f[r].extra.get("type") == "relabel"
         ]
         if not to_dismiss:
             QMessageBox.information(
@@ -1137,12 +1245,7 @@ class NameCleanupTab(PhaseTab):
         new_findings = [f for f in self.findings if id(f) not in dismiss_ids]
         self.findings = new_findings
         self.table.set_findings(new_findings, self.row_builder)
-        n = len(new_findings)
-        cap_note = (
-            f" (showing first {_TABLE_DISPLAY_CAP:,} — all included in Apply)"
-            if n > _TABLE_DISPLAY_CAP else ""
-        )
-        self.count_label.setText(f"{n:,} findings{cap_note}")
+        self.count_label.setText(f"{len(new_findings):,} findings")
         has_relabel = any(
             f.phase == 6 and f.extra.get("type") == "relabel" for f in new_findings
         )
@@ -1687,6 +1790,7 @@ class SyncTab(QWidget):
 
         self.table = FindingsTable(["Pair", "Status", "File / Path", "Size"])
         layout.addWidget(self.table)
+        layout.addWidget(self.table.make_pagination_bar(self))
 
         self._refresh_pair_labels()
 
@@ -1884,9 +1988,7 @@ class SyncTab(QWidget):
     def _color_status_cells(self) -> None:
         """Color the Status column cells by status type."""
         from PyQt6.QtGui import QColor
-        displayed = min(len(self.findings), _TABLE_DISPLAY_CAP)
-        for row in range(displayed):
-            f = self.findings[row]
+        for row, f in enumerate(self.table.page_findings()):
             color = self.STATUS_COLORS.get(f.status, "#333")
             item = self.table.item(row, 2)  # Status is col 2 (after ✓ and Pair)
             if item:
