@@ -1464,10 +1464,15 @@ def scan_bpm_relabel(
 
     # Post-filter 2: prefix-group sequential check.
     # Groups findings by (folder, stem-prefix-before-the-number) and drops any
-    # group whose numbers form a perfect consecutive sequence (step=1, ≥4 files).
+    # group that looks like a numbered sample pack rather than BPM labels.
+    # Two cases are caught:
+    #   Perfect:  ≥4 files, no gaps (step=1 throughout)
+    #   Dense:    ≥8 files covering ≥70% of their number range (handles packs
+    #             where a few numbers are simply absent, e.g. track 64 missing
+    #             from a 60–100 set → density 40/41 = 0.975, still filtered)
     # This handles flat multi-type packs like Vengeance where "VFOB2 CL Hihat 60–96"
     # and "VFOB2 Kick 60–96" share a folder — the folder-level check would see 333
-    # pooled numbers and fail, but each prefix group is cleanly sequential.
+    # pooled numbers and fail, but each prefix group is evaluated independently.
     by_prefix: dict = defaultdict(list)
     for f in findings:
         key = (f.path.parent, f.extra.get("bpm_prefix", ""))
@@ -1476,10 +1481,13 @@ def scan_bpm_relabel(
     sequential_ids: set = set()
     for (_folder, _prefix), flist in by_prefix.items():
         nums = sorted(f.extra["bpm"] for f in flist)
-        is_sequential = (
-            len(nums) >= 4
-            and nums[-1] - nums[0] == len(nums) - 1
-            and all(nums[i + 1] - nums[i] == 1 for i in range(len(nums) - 1))
+        span = nums[-1] - nums[0] + 1 if len(nums) >= 2 else 1
+        density = len(nums) / span
+        is_sequential = len(nums) >= 4 and (
+            # perfect: every number in the range is present
+            (nums[-1] - nums[0] == len(nums) - 1)
+            # dense: ≥8 files fill ≥70% of their range (a few gaps allowed)
+            or (len(nums) >= 8 and density >= 0.7)
         )
         if is_sequential:
             sequential_ids.update(id(f) for f in flist)

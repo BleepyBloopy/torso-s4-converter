@@ -2,6 +2,13 @@
 
 ---
 
+## [v8.4] – 2026-07-22
+
+### Fixed
+- **BPM Relabel — dense-but-gapped numbered packs not dismissed** — the sequential filter required a perfect consecutive sequence (no gaps), so a pack like "VVE2 Kit Claudio 60–100" where file 64 happened to be absent (40 files, range 41) failed the check and all 40 files were incorrectly flagged. The filter now also catches *dense* groups: ≥8 files covering ≥70% of their number range are treated as pack indices. A single missing track no longer defeats the filter.
+
+---
+
 ## [v8.3] – 2026-07-22
 
 ### Added
