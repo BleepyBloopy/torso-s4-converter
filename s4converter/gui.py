@@ -951,15 +951,39 @@ class PhaseTab(QWidget):
         if fail and hasattr(self, "worker") and self.worker:
             for f in self.worker.failed_findings[:50]:
                 self.main_window.log(f"  FAILED: {f.path}")
+        self._prune_succeeded()
         QMessageBox.information(self, "Complete", f"{ok} succeeded, {fail} failed.")
 
     def on_apply_stopped(self, ok: int, fail: int):
         self._hide_apply_ui()
         if self.main_window.cache:
             self.main_window.cache.save()
+        self._prune_succeeded()
         self.main_window.log(
             f"[{self.title}] Apply stopped. {ok} succeeded, {fail} failed. Cache saved."
         )
+
+    def _prune_succeeded(self):
+        """Remove successfully applied findings from the table."""
+        if not hasattr(self, "worker") or self.worker is None:
+            return
+        failed_ids = {id(f) for f in self.worker.failed_findings}
+        applied_ids = {id(f) for f in self.worker.findings}
+        new_findings = [
+            f for f in self.findings
+            if id(f) not in applied_ids or id(f) in failed_ids
+        ]
+        if len(new_findings) == len(self.findings):
+            return
+        self.findings = new_findings
+        self.table.set_findings(new_findings, self.row_builder)
+        self.count_label.setText(f"{len(new_findings):,} findings")
+        self.apply_btn.setEnabled(bool(new_findings))
+        self._on_table_pruned()
+
+    def _on_table_pruned(self):
+        """Hook called after _prune_succeeded. Override to update tab-specific UI."""
+        pass
 
 
 # ============================================================================
@@ -1127,6 +1151,7 @@ class FileCleanupTab(PhaseTab):
         if fail and hasattr(self, "worker") and self.worker:
             for f in self.worker.failed_findings[:50]:
                 self.main_window.log(f"  FAILED: {f.path}")
+        self._prune_succeeded()
         extra = ""
         if empty_deleted or flattened:
             extra = f"\n\nCascade cleanup: {empty_deleted} empty folder{'s' if empty_deleted != 1 else ''} removed, {flattened} folder layer{'s' if flattened != 1 else ''} flattened."
@@ -1349,6 +1374,12 @@ class NameCleanupTab(PhaseTab):
 
     def apply_fn(self):
         pass  # overridden by start_apply
+
+    def _on_table_pruned(self):
+        has_relabel = any(
+            f.phase == 6 and f.extra.get("type") == "relabel" for f in self.findings
+        )
+        self.not_bpm_btn.setEnabled(has_relabel)
 
 
 # ============================================================================
