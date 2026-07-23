@@ -432,7 +432,7 @@ def apply_phase_1(finding: Finding) -> bool:
 # Phase 2: Common prefix removal
 # ============================================================================
 
-_BPM_IN_PREFIX_RE = re.compile(r'\b\d{2,3}\s*bpm\b', re.IGNORECASE)
+_BPM_IN_PREFIX_RE = re.compile(r'(?<!\d)\d{2,3}\s*bpm', re.IGNORECASE)
 
 
 def detect_common_prefix(filenames: List[str]) -> str:
