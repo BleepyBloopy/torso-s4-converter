@@ -1382,6 +1382,40 @@ def scan_bpm_relabel(
     # in their Finding objects.
     all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=10, extensions={".wav"}))
     total = len(all_files)
+
+    # Pre-pass: collect BPM-range numbers from ALL files (size filter not applied)
+    # to determine which (folder, prefix) groups are numbered sample packs.
+    # Without this, the size filter can remove enough files to create artificial
+    # gaps that push a pack's density below the sequential-filter threshold
+    # (e.g. MIDI note packs where some notes are short and others are long).
+    _pre_by_prefix: dict = defaultdict(list)
+    for _path in all_files:
+        _stem = _path.stem
+        if _BPM_LABELED_RE.search(_stem):
+            continue
+        for _m in _BPM_STANDALONE_RE.finditer(_stem):
+            _num = int(_m.group(1))
+            if _num not in _BPM_RELABEL_RANGE:
+                continue
+            if _m.group(1)[0] == '0':
+                break  # zero-padded — whole-folder check handled separately
+            _after = _stem[_m.end():]
+            if _after.startswith("'") or re.match(r'\.\d', _after) or re.match(r'bpm', _after, re.IGNORECASE):
+                continue
+            _pre_by_prefix[(_path.parent, _stem[:_m.start()])].append(_num)
+            break  # only first qualifying number per file
+
+    pre_indexed: set = set()  # (folder, bpm_prefix) pairs identified as numbered packs
+    for (_pfolder, _ppfx), _pnums in _pre_by_prefix.items():
+        _pnums = sorted(set(_pnums))
+        _span = _pnums[-1] - _pnums[0] + 1 if len(_pnums) >= 2 else 1
+        _dens = len(_pnums) / _span
+        if len(_pnums) >= 4 and (
+            _pnums[-1] - _pnums[0] == len(_pnums) - 1
+            or (len(_pnums) >= 8 and _dens >= 0.7)
+        ):
+            pre_indexed.add((_pfolder, _ppfx))
+
     # Folders where any file has a zero-padded number (067, 082, …) — the whole
     # folder is treated as zero-padded sample indices, not BPMs.
     leading_zero_folders: set = set()
@@ -1438,6 +1472,10 @@ def scan_bpm_relabel(
         if candidate is None:
             continue
         m, num, new_stem = candidate
+        # Skip files whose prefix-group was identified as a numbered pack in the
+        # pre-pass (evaluated before the size filter to avoid artificial gaps).
+        if (path.parent, stem[:m.start()]) in pre_indexed:
+            continue
         new_name = new_stem + path.suffix
         findings.append(Finding(
             phase=6, path=path,
