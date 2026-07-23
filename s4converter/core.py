@@ -499,22 +499,19 @@ def apply_phase_2(finding: Finding, override_prefix: Optional[str] = None,
             log_cb("apply_phase_2: no prefix — nothing to strip")
         return 0
 
-    # When a custom prefix is in play, re-read the folder live so stale
-    # affected_files paths (from scan time) don't cause mismatches.
+    # Always re-read the folder live so files renamed by earlier phases
+    # (e.g. BPM Relabel) are included and stale scan-time paths are avoided.
     folder = finding.path
-    if override_prefix is not None:
-        try:
-            candidates = [
-                p for p in folder.iterdir()
-                if p.is_file() and not is_hidden_or_appledouble(p)
-                and p.name.startswith(prefix)
-            ]
-        except OSError as e:
-            if log_cb:
-                log_cb(f"apply_phase_2: cannot read folder: {e}")
-            return 0
-    else:
-        candidates = [Path(s) for s in finding.extra.get("affected_files", [])]
+    try:
+        candidates = [
+            p for p in folder.iterdir()
+            if p.is_file() and not is_hidden_or_appledouble(p)
+            and p.name.startswith(prefix)
+        ]
+    except OSError as e:
+        if log_cb:
+            log_cb(f"apply_phase_2: cannot read folder: {e}")
+        return 0
 
     if not candidates:
         if log_cb:
