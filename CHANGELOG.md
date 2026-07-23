@@ -2,6 +2,18 @@
 
 ---
 
+## [v8.8] – 2026-07-22
+
+### Fixed
+- **Long Prefix — BPM not stripped when separated by underscores** — `_BPM_IN_PREFIX_RE` used `\b` (word boundary) to detect BPM tokens, but `\b` does not fire between an underscore and a digit because both are `\w` characters. Prefixes like `SP_TSVI_136bpm_kit_boca_trance_` were never matched, so the BPM was never truncated and the full BPM-containing prefix was suggested for stripping. Fixed by replacing `\b` with a `(?<!\d)` negative lookbehind, which correctly handles underscore-separated segments.
+- **Long Prefix — bare BPM number not truncated (e.g. `PMTV_Percussion_Loop_140_`)** — the previous fix only caught explicit `Nbpm`-labelled tokens. Prefixes ending with a bare BPM-range number followed by `_` or end of string (e.g. `140_`) were not detected. `_BPM_IN_PREFIX_RE` now also matches a BPM-range number (60–220) followed by `_`, whitespace, or end of string, so `PMTV_Percussion_Loop_140_` truncates to `PMTV_Percussion_Loop_` and the BPM stays in each filename.
+- **Name Cleanup — documentation and non-audio files scanned** — `scan_long_prefix`, `scan_phase_3` (long name), and `scan_phase_7` (non-ASCII) scanned all files regardless of type. Folders containing only PDFs, text files, or other non-audio files (e.g. `Docs/Installation`) produced false positives. All three scans now restrict to `.wav` files only.
+
+### Changed
+- **S4 display character limit raised from 45 to 49** — the threshold used by Long Prefix and Long Name scans to decide when a filename is "too long" for the S-4 display.
+
+---
+
 ## [v8.7] – 2026-07-22
 
 ### Fixed
