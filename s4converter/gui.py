@@ -1071,7 +1071,7 @@ class FileCleanupTab(PhaseTab):
         )
 
     def build_table(self):
-        table = FindingsTable(["Open Folder", "Type", "Path", "File", "Detail", "Size"])
+        table = FindingsTable(["📂", "Type", "Path", "File", "Detail", "Size"])
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(1, 36)
         return table
@@ -1215,7 +1215,7 @@ class NameCleanupTab(PhaseTab):
 
     def build_table(self):
         table = FindingsTable(
-            ["Open Folder", "▶", "Path", "Type", "File / Folder", "Size", "Detail / Edit"],
+            ["📂", "▶", "Path", "Type", "File / Folder", "Size", "Detail / Edit"],
             editable_col=7,
         )
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
