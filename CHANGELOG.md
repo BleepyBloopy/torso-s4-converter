@@ -2,6 +2,25 @@
 
 ---
 
+## [v8.6] – 2026-07-22
+
+### Fixed
+- **BPM Relabel — MIDI note packs flagged due to size-filter gap interaction** — MIDI chromatic sample packs (e.g. Samples From Mars note numbers 60–84) contain notes of varying sizes; the 400 KB size filter removed ~10 files, leaving 14 findings with a density of 14/25 = 0.58 — just below the 0.70 threshold — so all remaining files were incorrectly flagged. A pre-pass now evaluates the full folder (all files, ignoring the size filter) before the main loop runs, so the true density (24/25 = 0.96) is used to dismiss the pack.
+- **Long Prefix apply misses files renamed by BPM Relabel** — `apply_phase_2` was using the file list frozen at scan time (`affected_files`). After BPM Relabel renamed files in the same session, those stale paths no longer existed and the prefix strip silently skipped them. The apply now always re-reads the folder live, so BPM-renamed files are included.
+- **Name Cleanup Path column too wide / play button column wrong width after scan** — `resizeColumnToContents` was called for all columns including Fixed-mode button columns (Open Folder, Play), overriding their programmatic widths with the empty-string cell content. Fixed-mode columns are now skipped in the auto-resize loop.
+
+---
+
+## [v8.5] – 2026-07-22
+
+### Added
+- **Audio preview in Name Cleanup tab** — a ▶ play button column (col 2, right of Open Folder) lets you listen to any file before deciding to rename it. Clicking ▶ starts playback; clicking again (⏹) stops it. Switching to a different row auto-stops the previous file. A single `QMediaPlayer` owned by the main window handles playback across all tabs and is stopped cleanly on app close.
+- **File size column in Name Cleanup tab** — shows KB / MB for each finding. Long Prefix rows (folders) show "—".
+- **Path column in Name Cleanup tab** — shows the parent folder path after the Open Folder button, so the folder is visible without opening Finder.
+- **Detail and Edit columns merged** — the former "Detail" column (showing `→ target`) and "Edit" column (editable target) are now a single "Detail / Edit" column. For Long Prefix rows the file count moves to the "File / Folder" cell.
+
+---
+
 ## [v8.4] – 2026-07-22
 
 ### Fixed
