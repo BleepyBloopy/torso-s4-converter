@@ -348,8 +348,13 @@ class FindingsTable(QTableWidget):
         if display:
             # Cap each column at 35% of viewport width so long paths can't push
             # other columns off screen. Last column is always left to stretch.
+            # Skip Fixed-mode columns (button columns) — their width is set
+            # explicitly in build_table and must not be overridden by content.
             max_w = max(120, int(self.viewport().width() * 0.35))
+            hdr = self.horizontalHeader()
             for col in range(self.columnCount() - 1):
+                if hdr.sectionResizeMode(col) == QHeaderView.ResizeMode.Fixed:
+                    continue
                 self.resizeColumnToContents(col)
                 if self.columnWidth(col) > max_w:
                     self.setColumnWidth(col, max_w)
