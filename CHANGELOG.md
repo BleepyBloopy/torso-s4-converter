@@ -2,6 +2,15 @@
 
 ---
 
+## [v8.7] – 2026-07-22
+
+### Fixed
+- **BPM Relabel — sparsely-sampled MIDI chromatic packs flagged** — every-3rd-note packs (e.g. Samples From Mars C/E/G-per-octave sets, note numbers 63/66/70…) have BPM-range MIDI note numbers at only ~27% density — too low for the density filter. Added `_MUSIC_NOTE_TAIL_RE`: if a stem ends with a musical note name preceded by whitespace (e.g. `" E3"`, `" G#4"`, `" C-2"`, `" G6_0001"` for Kontakt round-robin), the file is classified as a MIDI chromatic sample and skipped entirely, regardless of density.
+- **Long Prefix — detected prefix strips BPM from filenames** — `detect_common_prefix` could return a prefix containing BPM info (e.g. `"SP_TSVI_136bpm_kit_boca_trance_"`). Stripping that prefix deletes the BPM from every file. The prefix is now truncated to stop just before the first BPM match (e.g. → `"SP_TSVI_"`), so files become `"136bpm_kit_boca_trance_kick.wav"` after stripping. If nothing useful remains before the BPM (shorter than `MIN_PREFIX_LENGTH`), the folder is skipped.
+- **Non-ASCII scan — parent folders incorrectly marked clean, hiding non-ASCII children** — `scan_phase_7` marked a folder clean if all its direct files were ASCII, even when a child subfolder still had non-ASCII findings. On the next fast scan the parent's clean marker triggered `dirs.clear()`, silently hiding the child. The marking logic now walks up the ancestor chain of every finding folder and excludes all ancestors from clean-marking, so they are always re-evaluated on fast scan.
+
+---
+
 ## [v8.6] – 2026-07-22
 
 ### Fixed
