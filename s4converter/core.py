@@ -620,7 +620,8 @@ def scan_long_prefix(
         try:
             all_files = [
                 f for f in folder.iterdir()
-                if f.is_file() and not is_hidden_or_appledouble(f)
+                if f.is_file() and f.suffix.lower() == ".wav"
+                and not is_hidden_or_appledouble(f)
             ]
         except OSError:
             continue
@@ -713,7 +714,7 @@ def scan_phase_3(base_dir: Path, only_new: bool = False,
                  ) -> List[Finding]:
     findings             = []
     folder_has_findings: set = set()
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=3))
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=3, extensions={".wav"}))
     total     = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -1740,7 +1741,7 @@ def scan_phase_7(
     """Flag files with non-ASCII stems and suggest romanized alternatives."""
     findings             = []
     folder_has_findings: set = set()
-    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=7))
+    all_files = list(iter_files(base_dir, skip_clean_folders=only_new, phase=7, extensions={".wav"}))
     total = len(all_files)
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
