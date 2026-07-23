@@ -634,6 +634,15 @@ def scan_long_prefix(
         if not prefix:
             continue
 
+        # If the detected prefix contains BPM info (e.g. "SP_TSVI_136bpm_kit_boca_trance_"),
+        # truncate it to stop just before the BPM so the BPM survives in the filename.
+        # e.g. prefix → "SP_TSVI_" and files become "136bpm_kit_boca_trance_kick.wav".
+        bpm_in_pfx = _BPM_IN_PREFIX_RE.search(prefix)
+        if bpm_in_pfx:
+            prefix = prefix[:bpm_in_pfx.start()]
+            if len(prefix) < config.MIN_PREFIX_LENGTH:
+                continue
+
         # At least one long file must start with the prefix and have content after it.
         benefiting = [
             f for f in long_files
