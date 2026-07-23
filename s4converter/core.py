@@ -1350,6 +1350,12 @@ _BPM_STANDALONE_RE = re.compile(r'(?<![a-zA-Z0-9])(\d{2,3})(?![a-zA-Z0-9])')
 # implausible values (>220).
 _BPM_RELABEL_RANGE = range(60, 221)
 
+# Detects a musical note name at the tail of a stem, preceded by whitespace.
+# Matches patterns like " E3", " G#4", " C-2", " G6_0001" (Kontakt round-robin).
+# Used to skip MIDI chromatic note samples whose leading number is the MIDI
+# note number, not a BPM — regardless of how sparse their pitches are.
+_MUSIC_NOTE_TAIL_RE = re.compile(r'\s[A-G][#b]?-?\d+(?:_\d+)?$')
+
 
 def _stem_has_bpm(path: Path) -> bool:
     """Return True if the filename already contains a BPM-like number."""
@@ -1399,6 +1405,8 @@ def scan_bpm_relabel(
                 continue
             if _m.group(1)[0] == '0':
                 break  # zero-padded — whole-folder check handled separately
+            if _MUSIC_NOTE_TAIL_RE.search(_stem):
+                break  # whole file is a MIDI note sample — don't count it
             _after = _stem[_m.end():]
             if _after.startswith("'") or re.match(r'\.\d', _after) or re.match(r'bpm', _after, re.IGNORECASE):
                 continue
@@ -1438,6 +1446,10 @@ def scan_bpm_relabel(
         stem = path.stem
         # Skip files that already carry a proper 'bpm' label.
         if _BPM_LABELED_RE.search(stem):
+            continue
+        # Skip MIDI chromatic note samples — stem ends with a note name like
+        # " E3", " G#4", " C-2", " G6_0001" (Kontakt round-robin suffix).
+        if _MUSIC_NOTE_TAIL_RE.search(stem):
             continue
         # Find the first standalone number in BPM range that needs a 'bpm' label.
         candidate = None
