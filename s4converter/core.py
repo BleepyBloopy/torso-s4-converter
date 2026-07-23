@@ -1771,7 +1771,17 @@ def scan_phase_7(
             extra={"non_ascii": non_ascii},
         ))
         folder_has_findings.add(path.parent)
-    for folder in {p.parent for p in all_files} - folder_has_findings:
+    # Also exclude ancestors of finding folders: a parent folder must not be
+    # marked clean if any of its subdirectories still have pending findings.
+    # Without this, a parent with only ASCII direct files gets a clean marker
+    # that blocks descent on the next fast scan, hiding non-ASCII children.
+    dirty: set = set(folder_has_findings)
+    for f in folder_has_findings:
+        ancestor = f.parent
+        while ancestor != base_dir and ancestor not in dirty:
+            dirty.add(ancestor)
+            ancestor = ancestor.parent
+    for folder in {p.parent for p in all_files} - dirty:
         FolderMarkers.mark_folder(folder, phase=7)
     if progress_cb:
         progress_cb(total, total)
