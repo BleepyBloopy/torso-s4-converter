@@ -37,6 +37,8 @@
   ],
   "bpm_skip_folder_hints": [
     "one shot", "one-shot", "oneshot",
+    "1 shot", "1-shot", "1shot",
+    "single shot",
     "fx", "sfx", "foley",
     "field recording", "ambience", "ambient",
     "hit", "hits", "stab",

@@ -1440,6 +1440,9 @@ def scan_bpm_relabel(
     # Folders where any file has a zero-padded number (067, 082, …) — the whole
     # folder is treated as zero-padded sample indices, not BPMs.
     leading_zero_folders: set = set()
+    # Cache folder-hint skip results: True = this folder (or an ancestor) is a
+    # known one-shot / non-loop folder and all its files should be skipped.
+    _folder_hint_skip: dict = {}
     for i, path in enumerate(all_files):
         if stop_event and stop_event.is_set():
             break
@@ -1447,6 +1450,23 @@ def scan_bpm_relabel(
             progress_cb(i, total)
         if file_cb:
             file_cb(str(path))
+        # Skip files inside one-shot / non-loop ancestor folders.  Walk from the
+        # immediate parent up to base_dir and check each folder name against the
+        # hint list.  "loop" in the folder name overrides the hint (a folder
+        # named "One Shot Loops" still contains loops).
+        _folder = path.parent
+        if _folder not in _folder_hint_skip:
+            try:
+                _parts = _folder.relative_to(base_dir).parts
+            except ValueError:
+                _parts = (_folder.name,)
+            _folder_hint_skip[_folder] = any(
+                "loop" not in _p.lower()
+                and any(h in _p.lower() for h in config.BPM_SKIP_FOLDER_HINTS)
+                for _p in _parts
+            )
+        if _folder_hint_skip[_folder]:
+            continue
         # Skip files the user has permanently dismissed as "not a BPM".
         if cache is not None and cache.is_bpm_relabel_reviewed(path):
             continue

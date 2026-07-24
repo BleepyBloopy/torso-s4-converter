@@ -99,8 +99,14 @@ BPM_TARGET_MAX      = int(  _u.get("bpm_target_max",      175))
 BPM_RELABEL_MAX_ONESHOT_BYTES = int(_u.get("bpm_relabel_max_oneshot_kb", 400)) * 1024
 
 BPM_SKIP_FOLDER_HINTS = set(_u.get("bpm_skip_folder_hints", [
-    "one shot", "one-shot", "oneshot", "fx", "field recording",
-    "ambience", "ambient", "foley", "sfx", "hit", "hits",
+    "one shot", "one-shot", "oneshot",
+    "1 shot", "1-shot", "1shot", "single shot",
+    "fx", "sfx", "foley", "field recording", "ambience", "ambient",
+    "hit", "hits", "stab",
+    "kick", "snare", "hat", "hihat", "hi-hat",
+    "cymbal", "clap", "tom", "ride", "crash",
+    "rimshot", "rim", "808",
+    "perc", "shaker", "tamb", "conga", "bongo",
 ]))
 
 # --- Sync pairs (Mac source → USB destination) ---
