@@ -218,6 +218,31 @@ class BootstrapWorker(QObject):
             self.error.emit(str(e))
 
 
+class EjectWorker(QObject):
+    """Run diskutil eject in a background thread so the UI stays responsive."""
+    finished = pyqtSignal(bool, str)  # success, error_message
+
+    def __init__(self, mount: Path):
+        super().__init__()
+        self._mount = mount
+
+    def run(self):
+        try:
+            res = subprocess.run(
+                ["diskutil", "eject", str(self._mount)],
+                capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+            )
+            if res.returncode == 0:
+                self.finished.emit(True, "")
+            else:
+                err = (res.stderr or res.stdout or "unknown error").strip()
+                self.finished.emit(False, err)
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "diskutil eject timed out after 60 s — drive may still be busy")
+        except OSError as e:
+            self.finished.emit(False, str(e))
+
+
 class ReportWorker(QObject):
     """Generate the CSV + Markdown report in a background thread."""
     finished = pyqtSignal(str, str)   # csv_path, md_path
@@ -2663,27 +2688,28 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
 
-        # Run diskutil eject
-        try:
-            res = subprocess.run(
-                ["diskutil", "eject", str(mount)],
-                capture_output=True, encoding="utf-8", errors="replace", timeout=15,
-            )
-            if res.returncode == 0:
-                self.log(f"Ejected: {mount}")
-                self.statusBar().showMessage(f"Ejected {mount.name} — safe to unplug.")
-                QMessageBox.information(self, "Ejected",
-                                        f"{mount.name} ejected successfully.\nSafe to unplug.")
-            else:
-                err = (res.stderr or res.stdout or "unknown error").strip()
-                self.log(f"Eject failed: {err}")
-                self.statusBar().showMessage("Eject failed — see log.")
-                QMessageBox.warning(self, "Eject Failed",
-                                    f"diskutil eject returned an error:\n\n{err}")
-        except (subprocess.TimeoutExpired, OSError) as e:
-            self.log(f"Eject error: {e}")
+        # Run diskutil eject in a background thread (can take >15 s on busy drives).
+        self._eject_mount = mount
+        self._eject_thread = QThread(self)
+        self._eject_worker = EjectWorker(mount)
+        self._eject_worker.moveToThread(self._eject_thread)
+        self._eject_thread.started.connect(self._eject_worker.run)
+        self._eject_worker.finished.connect(self._on_eject_done)
+        self._eject_worker.finished.connect(self._eject_thread.quit)
+        self._eject_thread.start()
+
+    def _on_eject_done(self, success: bool, err: str):
+        mount = self._eject_mount
+        if success:
+            self.log(f"Ejected: {mount}")
+            self.statusBar().showMessage(f"Ejected {mount.name} — safe to unplug.")
+            QMessageBox.information(self, "Ejected",
+                                    f"{mount.name} ejected successfully.\nSafe to unplug.")
+        else:
+            self.log(f"Eject failed: {err}")
             self.statusBar().showMessage("Eject failed — see log.")
-            QMessageBox.warning(self, "Eject Failed", str(e))
+            QMessageBox.warning(self, "Eject Failed",
+                                f"diskutil eject returned an error:\n\n{err}")
 
     def set_busy(self, busy: bool):
         self._busy = busy
